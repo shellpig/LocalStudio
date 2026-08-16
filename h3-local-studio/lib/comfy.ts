@@ -49,9 +49,12 @@ export type GeneratedVideo = {
   referenceDefinitions?: ReferenceDefinition[];
 };
 
+export type PromptEngine = "codex" | "grok";
+
 export type OptimizedPrompt = {
   prompt: string;
   mode: "T2VA" | "I2VA" | "FL2VA" | "L2VA" | "Ref2VA";
+  engine: PromptEngine;
 };
 
 export type ReferenceImageInput = {
@@ -317,11 +320,13 @@ export async function optimizeVideoPrompt(
   firstImage: File | null,
   lastImage: File | null,
   referenceImages: ReferenceImageInput[] = [],
+  engine: PromptEngine = "codex",
 ) {
   const data = new FormData();
   data.append("brief", brief);
   data.append("duration", String(duration));
   data.append("sound", String(sound));
+  data.append("engine", engine);
   if (firstImage) data.append("first_image", firstImage, firstImage.name);
   if (lastImage) data.append("last_image", lastImage, lastImage.name);
   if (referenceImages.length) {

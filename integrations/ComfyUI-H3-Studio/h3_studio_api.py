@@ -1,6 +1,8 @@
 import asyncio
+import base64
 import ctypes
 from datetime import datetime
+import io
 import json
 import os
 from pathlib import Path
@@ -10,6 +12,7 @@ import tempfile
 import uuid
 
 from aiohttp import web
+from PIL import Image, ImageOps
 
 import folder_paths
 from server import PromptServer
@@ -18,6 +21,9 @@ from server import PromptServer
 PROMPT_OPTIMIZATION_LOCK = asyncio.Lock()
 PROMPT_OPTIMIZATION_TIMEOUT_SECONDS = 180
 MAX_PROMPT_IMAGE_BYTES = 20 * 1024 * 1024
+PROMPT_ENGINE_LABELS = {"codex": "Codex", "grok": "Grok"}
+GROK_IMAGE_LONG_EDGE = 1024
+GROK_MAX_TURNS = 8
 STUDIO_ORIGINS = {"http://localhost:3000", "http://127.0.0.1:3000"}
 PROMPT_SCHEMA_PATH = Path(__file__).with_name("h3_prompt_output_schema.json")
 STUDIO_WORKING_DIRECTORY = Path(__file__).resolve().parents[2] / "h3-local-studio"
@@ -305,9 +311,9 @@ USER_BRIEF_JSON:
 """
 
 
-def validate_optimized_prompt(value, mode):
+def validate_optimized_prompt(value, mode, engine_label):
     if not isinstance(value, str) or not value.strip() or len(value) > 16000:
-        raise ValueError("Codex returned an invalid prompt")
+        raise ValueError(f"{engine_label} returned an invalid prompt")
     value = value.strip()
     fields = (
         ["subject_definitions:", "summary:", "retention_analysis:", "detailed_description:", "overall_soundscape:", "non_diegetic_music:"]
@@ -316,15 +322,15 @@ def validate_optimized_prompt(value, mode):
     )
     positions = [value.find(field) for field in fields]
     if any(position < 0 for position in positions) or positions != sorted(positions):
-        raise ValueError("Codex did not return the official H3 prompt structure")
+        raise ValueError(f"{engine_label} did not return the official H3 prompt structure")
     if mode == "T2VA" and not value.startswith(fields[0]):
-        raise ValueError("Codex returned an invalid T2VA prompt")
+        raise ValueError(f"{engine_label} returned an invalid T2VA prompt")
     if mode == "I2VA" and not value.startswith("For the target video, at 0.00 seconds"):
-        raise ValueError("Codex returned an invalid I2VA alignment")
+        raise ValueError(f"{engine_label} returned an invalid I2VA alignment")
     if mode in {"FL2VA", "L2VA"} and not value.startswith("How the reference pictures align with the target video"):
-        raise ValueError(f"Codex returned an invalid {mode} alignment")
+        raise ValueError(f"{engine_label} returned an invalid {mode} alignment")
     if mode == "Ref2VA" and not value.startswith(fields[0]):
-        raise ValueError("Codex returned an invalid Ref2VA prompt")
+        raise ValueError(f"{engine_label} returned an invalid Ref2VA prompt")
     return value
 
 
@@ -334,7 +340,7 @@ async def read_prompt_optimization_request(request, temporary_directory):
     images = {}
     allowed_image_types = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
     async for part in reader:
-        if part.name in {"brief", "duration", "sound", "reference_manifest"}:
+        if part.name in {"brief", "duration", "sound", "reference_manifest", "engine"}:
             values[part.name] = await part.text()
             continue
         is_reference_image = part.name.startswith("reference_image_") and part.name.removeprefix("reference_image_").isdigit()
@@ -367,6 +373,9 @@ async def read_prompt_optimization_request(request, temporary_directory):
         raise ValueError("Target duration must be between 1 and 15 seconds")
     if values.get("sound") not in {"true", "false"}:
         raise ValueError("Invalid sound setting")
+    engine = values.get("engine", "codex")
+    if engine not in PROMPT_ENGINE_LABELS:
+        raise ValueError("Invalid prompt optimization engine")
     try:
         reference_manifest = json.loads(values.get("reference_manifest", "[]"))
     except json.JSONDecodeError as error:
@@ -399,7 +408,7 @@ async def read_prompt_optimization_request(request, temporary_directory):
             raise ValueError("Reference labels must be unique")
     elif reference_manifest:
         raise ValueError("Reference manifest has no attached images")
-    return brief, duration, values["sound"] == "true", images, reference_manifest, reference_names
+    return brief, duration, values["sound"] == "true", images, reference_manifest, reference_names, engine
 
 
 def find_codex_cli():
@@ -470,6 +479,118 @@ async def run_codex_prompt_optimizer(instruction, image_paths):
     return result.get("optimizedPrompt")
 
 
+def find_grok_cli():
+    if os.name == "nt":
+        return shutil.which("grok.cmd") or shutil.which("grok.exe") or shutil.which("grok")
+    return shutil.which("grok")
+
+
+def grok_image_block(image_path):
+    with Image.open(image_path) as image:
+        image = ImageOps.exif_transpose(image)
+        if image.mode == "RGBA":
+            background = Image.new("RGB", image.size, (255, 255, 255))
+            background.paste(image, mask=image.split()[3])
+            image = background
+        elif image.mode != "RGB":
+            image = image.convert("RGB")
+        image.thumbnail((GROK_IMAGE_LONG_EDGE, GROK_IMAGE_LONG_EDGE), Image.LANCZOS)
+        buffer = io.BytesIO()
+        image.save(buffer, "JPEG", quality=85)
+    return {"type": "image", "mimeType": "image/jpeg", "data": base64.b64encode(buffer.getvalue()).decode("ascii")}
+
+
+def grok_result_line(stdout):
+    # Grok streams one JSON object per line; the final `result` line reports the outcome.
+    result = None
+    for line in stdout.decode("utf-8").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if message.get("type") == "result":
+            result = message
+    return result
+
+
+def grok_failure_detail(stderr_text):
+    lines = [line.strip() for line in stderr_text.splitlines() if line.strip()]
+    for line in reversed(lines):
+        if line.startswith("Error:"):
+            return line.removeprefix("Error:").strip()
+    return lines[-1] if lines else ""
+
+
+async def run_grok_prompt_optimizer(instruction, image_paths):
+    grok = find_grok_cli()
+    if not grok:
+        raise RuntimeError("Grok CLI is not installed or not available in PATH")
+    if not PROMPT_SCHEMA_PATH.is_file():
+        raise RuntimeError("H3 prompt output schema is missing")
+    if not STUDIO_WORKING_DIRECTORY.is_dir():
+        raise RuntimeError("H3 Studio working directory is missing")
+
+    # Grok has no --image flag: images travel as base64 ACP blocks, which are far too long for a Windows command line.
+    blocks = [await asyncio.to_thread(grok_image_block, image_path) for image_path in image_paths]
+    blocks.append({"type": "text", "text": instruction})
+    with tempfile.NamedTemporaryFile("w", suffix=".json", prefix="h3_grok_", encoding="utf-8", delete=False) as file:
+        prompt_path = Path(file.name)
+        json.dump(blocks, file, ensure_ascii=False)
+
+    # The Windows launcher is a batch shim, so the schema has to stay on a single line.
+    schema = json.dumps(json.loads(PROMPT_SCHEMA_PATH.read_text(encoding="utf-8")), separators=(",", ":"))
+    command = [
+        grok,
+        "--prompt-file",
+        str(prompt_path),
+        "--cwd",
+        str(STUDIO_WORKING_DIRECTORY),
+        "--json-schema",
+        schema,
+        "--output-format",
+        "streaming-messages-json",
+        "--disallowed-tools",
+        "run_terminal_cmd,web_search,web_fetch",
+        "--max-turns",
+        str(GROK_MAX_TURNS),
+    ]
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=PROMPT_OPTIMIZATION_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.communicate()
+            raise TimeoutError("Grok prompt optimization timed out")
+    finally:
+        prompt_path.unlink(missing_ok=True)
+
+    stderr_text = stderr.decode("utf-8", errors="replace").strip()
+    try:
+        result = grok_result_line(stdout)
+    except UnicodeDecodeError as error:
+        raise RuntimeError("Grok returned an unreadable prompt response") from error
+
+    # Grok still exits 0 when a run aborts, so the result line is what decides success.
+    if process.returncode != 0 or not result or result.get("subtype") != "success":
+        if stderr_text:
+            print(f"[H3 Studio] Grok prompt optimizer failed: {stderr_text[-2000:]}", flush=True)
+        detail = grok_failure_detail(stderr_text)
+        raise RuntimeError(f"Grok CLI could not optimize the prompt. {detail}" if detail
+                           else "Grok CLI could not optimize the prompt. Check Grok login and usage limits")
+    structured = result.get("structured_output")
+    return structured.get("optimizedPrompt") if isinstance(structured, dict) else None
+
+
 @PromptServer.instance.routes.post("/h3-studio/optimize-prompt")
 async def optimize_h3_prompt(request):
     if request.headers.get("Origin") not in STUDIO_ORIGINS:
@@ -480,14 +601,15 @@ async def optimize_h3_prompt(request):
     async with PROMPT_OPTIMIZATION_LOCK:
         try:
             with tempfile.TemporaryDirectory(prefix="h3_prompt_") as temporary_directory:
-                brief, duration, sound, images, reference_manifest, reference_names = await read_prompt_optimization_request(request, temporary_directory)
+                brief, duration, sound, images, reference_manifest, reference_names, engine = await read_prompt_optimization_request(request, temporary_directory)
                 mode = prompt_mode(images.get("first_image"), images.get("last_image"), reference_names)
                 image_names = reference_names or [name for name in ("first_image", "last_image") if name in images]
                 image_paths = [images[name] for name in image_names]
                 instruction = prompt_instruction(brief, mode, duration, sound, reference_manifest)
-                optimized = await run_codex_prompt_optimizer(instruction, image_paths)
-                optimized = validate_optimized_prompt(optimized, mode)
-                return web.json_response({"prompt": optimized, "mode": mode})
+                optimizer = run_grok_prompt_optimizer if engine == "grok" else run_codex_prompt_optimizer
+                optimized = await optimizer(instruction, image_paths)
+                optimized = validate_optimized_prompt(optimized, mode, PROMPT_ENGINE_LABELS[engine])
+                return web.json_response({"prompt": optimized, "mode": mode, "engine": engine})
         except ValueError as error:
             return web.json_response({"error": str(error)}, status=400)
         except TimeoutError as error:

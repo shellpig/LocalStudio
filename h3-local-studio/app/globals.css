@@ -73,6 +73,9 @@ button { color: inherit; }
 .prompt-optimize-button { border: 1px solid #52427e; background: #211b35; color: #c7b7ff; }
 .prompt-optimize-button span { margin-right: 5px; color: #9d7cff; }
 .prompt-restore-button { border: 1px solid #343641; background: transparent; color: #9294a0; }
+.engine-switch { display: flex; gap: 0; border: 1px solid #343641; border-radius: 8px; overflow: hidden; }
+.engine-switch button { border: 0; border-radius: 0; background: transparent; color: #7f8290; padding: 8px 12px; }
+.engine-switch button.active { background: #211b35; color: #c7b7ff; }
 .prompt-tools small { color: #686a76; text-align: right; }
 .continuation-banner { position: relative; padding: 16px 130px 15px 22px; border-bottom: 1px solid #3b315d; background: rgba(118,82,255,.11); }
 .continuation-banner div { display: flex; align-items: center; gap: 10px; min-width: 0; }

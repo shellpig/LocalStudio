@@ -12,6 +12,7 @@ import {
   inputImageUrl,
   optimizeVideoPrompt,
   outputUrl,
+  PromptEngine,
   ReferenceImageInput,
   resolveOutputDimensions,
 } from "@/lib/comfy";
@@ -56,6 +57,7 @@ export default function Home() {
   const nextReferenceId = useRef(2);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isOptimizing, setIsOptimizing] = useState(false);
+  const [promptEngine, setPromptEngine] = useState<PromptEngine>("codex");
   const [promptBeforeOptimization, setPromptBeforeOptimization] = useState<string | null>(null);
   const [optimizedPromptMode, setOptimizedPromptMode] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -73,6 +75,18 @@ export default function Home() {
       // Connection state already communicates that ComfyUI is unavailable.
     }
   }, []);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem("h3-prompt-engine");
+    if (saved === "codex" || saved === "grok") setPromptEngine(saved);
+  }, []);
+
+  function choosePromptEngine(engine: PromptEngine) {
+    setPromptEngine(engine);
+    window.localStorage.setItem("h3-prompt-engine", engine);
+  }
+
+  const engineLabel = promptEngine === "grok" ? "Grok" : "Codex";
 
   useEffect(() => {
     let active = true;
@@ -332,12 +346,13 @@ export default function Home() {
         !continuationSource && sourceMode === "image" ? firstImageFile : null,
         !continuationSource && sourceMode === "image" ? lastImageFile : null,
         references,
+        promptEngine,
       );
       setPromptBeforeOptimization(original);
       setPrompt(result.prompt);
       setOptimizedPromptMode(result.mode);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Codex 無法優化 Prompt，請稍後再試。 ");
+      setError(caught instanceof Error ? caught.message : `${engineLabel} 無法優化 Prompt，請稍後再試。 `);
     } finally {
       setIsOptimizing(false);
     }
@@ -673,12 +688,24 @@ export default function Home() {
 
               <div className="prompt-tools">
                 <div>
+                  <div className="engine-switch" role="group" aria-label="Prompt 優化模型">
+                    {(["codex", "grok"] as const).map((engine) => (
+                      <button
+                        key={engine}
+                        className={promptEngine === engine ? "active" : ""}
+                        onClick={() => choosePromptEngine(engine)}
+                        disabled={isGenerating || isOptimizing}
+                      >
+                        {engine === "grok" ? "Grok" : "Codex"}
+                      </button>
+                    ))}
+                  </div>
                   <button
                     className="prompt-optimize-button"
                     onClick={optimizePrompt}
                     disabled={!connected || isGenerating || isOptimizing || Boolean(continuationSource)}
                   >
-                    <span>✦</span>{isOptimizing ? "Codex 正在依官方 Skill 優化…" : "官方 H3 Prompt 優化"}
+                    <span>✦</span>{isOptimizing ? `${engineLabel} 正在依官方 Skill 優化…` : "官方 H3 Prompt 優化"}
                   </button>
                   {promptBeforeOptimization !== null && (
                     <button className="prompt-restore-button" onClick={restorePrompt} disabled={isGenerating || isOptimizing}>還原原始描述</button>
@@ -690,8 +717,8 @@ export default function Home() {
                     : optimizedPromptMode
                     ? `已套用 MiniMax 官方 ${optimizedPromptMode} 格式；請確認內容後再生成。`
                     : sourceMode === "reference"
-                      ? "Codex 會分析全部參考圖，將 @標籤整理為 Ref2VA 的 Subject／Picture 對應。"
-                      : "透過背景 Codex CLI 套用 MiniMax 官方 Prompt Skill；圖片模式會分析首尾幀。"}
+                      ? `${engineLabel} 會分析全部參考圖，將 @標籤整理為 Ref2VA 的 Subject／Picture 對應。`
+                      : `透過背景 ${engineLabel} CLI 套用 MiniMax 官方 Prompt Skill；圖片模式會分析首尾幀。`}
                 </small>
               </div>
 
