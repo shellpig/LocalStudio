@@ -1,0 +1,208 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+async function render() {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+
+  return worker.fetch(
+    new Request("http://localhost/", {
+      headers: { accept: "text/html" },
+    }),
+    {
+      ASSETS: {
+        fetch: async () => new Response("Not found", { status: 404 }),
+      },
+    },
+    {
+      waitUntil() {},
+      passThroughOnException() {},
+    },
+  );
+}
+
+test("server-renders H3 Local Studio controls", async () => {
+  const response = await render();
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
+
+  const html = await response.text();
+  assert.match(html, /<title>H3 Local Studio<\/title>/i);
+  assert.match(html, /讓靈感，躍然成片/);
+  assert.match(html, /608 × 352/);
+  assert.match(html, /864 × 480/);
+  assert.match(html, /開啟 · 立體聲/);
+  assert.match(html, /關閉 · 無音軌/);
+});
+
+test("keeps Motion Context continuation wiring intact", async () => {
+  const [page, styles, comfy, api] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../lib/comfy.ts", import.meta.url), "utf8"),
+    readFile(new URL("../../ComfyUI/custom_nodes/h3_studio_api.py", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(page, /下載影片/);
+  assert.match(page, /影片操作/);
+  assert.match(page, /延伸影片/);
+  assert.match(page, /延伸固定使用相容的 QUALITY 20 步/);
+  assert.match(page, /const DURATION_OPTIONS = \[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15\]/);
+  assert.match(comfy, /if \(seconds === 1\) return 22/);
+  assert.match(comfy, /if \(seconds === 2\) return 56/);
+  assert.match(page, /選擇首幀圖片/);
+  assert.match(page, /選擇尾幀圖片/);
+  assert.match(page, /只選尾圖也能生成/);
+  assert.match(page, /!firstImageFile && !lastImageFile/);
+  assert.match(page, /firstImageDimensions \?\? lastImageDimensions/);
+  assert.match(styles, /aspect-ratio: 4 \/ 3/);
+  assert.match(styles, /min-height: 280px/);
+  assert.match(page, /安全長片 · 低解析生成／480P 輸出/);
+  assert.match(page, /官方 H3 Prompt 優化/);
+  assert.match(page, /還原原始描述/);
+  assert.match(page, /圖片模式會分析首尾幀/);
+  assert.match(comfy, /h3-studio\/optimize-prompt/);
+  assert.match(api, /routes\.post\("\/h3-studio\/optimize-prompt"\)/);
+  assert.match(api, /PROMPT_OPTIMIZATION_LOCK/);
+  assert.match(api, /"--ephemeral"/);
+  assert.match(api, /"--sandbox",\s*"read-only"/);
+  assert.match(api, /"--output-schema"/);
+  assert.match(api, /request\.headers\.get\("Origin"\) not in STUDIO_ORIGINS/);
+  assert.match(api, /if not 1 <= duration <= 15/);
+  assert.match(page, /COOLED FAST · Turbo 6 步／分段降溫/);
+  assert.match(page, /第 1～6 步完成後各暫停 12 秒/);
+  assert.match(page, /COOLED TURBO 8 · Turbo 8 步／每步降溫/);
+  assert.match(page, /第 1～8 步完成後各暫停 12 秒/);
+  assert.match(page, /QUALITY · 原生 20 步／每步降溫/);
+  assert.match(page, /第 1～20 步完成後各暫停 12 秒/);
+  assert.match(comfy, /profile: "fast" \| "cooled-fast" \| "cooled-turbo-8" \| "quality" \| "safe-long"/);
+  assert.match(comfy, /H3CooledTurboSampler/);
+  assert.match(comfy, /steps: quality \? 20 : cooledTurbo8 \? 8 : 6/);
+  assert.match(comfy, /cooledFast \|\| cooledTurbo8 \? \["122", 0\]/);
+  assert.match(comfy, /quality \? \["123", 0\]/);
+  assert.match(comfy, /H3CooledSampler/);
+  assert.match(api, /"fast", "cooled-fast", "cooled-turbo-8", "quality", "safe-long"/);
+  assert.match(comfy, /VAEDecodeTiled/);
+  assert.match(comfy, /low_vram: safeLong/);
+  assert.match(comfy, /h3-studio\/upscale/);
+  assert.match(api, /routes\.post\("\/h3-studio\/upscale"\)/);
+  assert.match(api, /"-c:v", "libx264"/);
+  assert.match(comfy, /MiniMaxH3MotionContextSaveLatent/);
+  assert.match(comfy, /MiniMaxH3MotionContextLoadLatent/);
+  assert.match(comfy, /MiniMaxH3MotionContextTrim/);
+  assert.match(comfy, /context_length: "22"/);
+  assert.match(comfy, /referenceContinuation \? "cooled-turbo-8" : "quality"/);
+  assert.match(comfy, /inputs\.first_frame = \["130", 0\]/);
+  assert.match(comfy, /inputs\.last_frame = \["131", 0\]/);
+  assert.match(api, /routes\.post\("\/h3-studio\/concat"\)/);
+  assert.match(api, /duration \{duration:\.9f\}/);
+});
+
+test("adds Ref2VA references without replacing existing generation flows", async () => {
+  const [page, styles, comfy, api] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../lib/comfy.ts", import.meta.url), "utf8"),
+    readFile(new URL("../../ComfyUI/custom_nodes/h3_studio_api.py", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(page, /參考生影片/);
+  assert.match(page, /@標籤/);
+  assert.match(page, /參考說明（選填）/);
+  assert.match(page, /每個參考項目都要有圖片與 @標籤/);
+  assert.doesNotMatch(page, /!reference\.description\.trim\(\)/);
+  assert.match(page, /新增參考/);
+  assert.match(page, /referenceImages\.length >= 9/);
+  assert.match(styles, /grid-template-columns: repeat\(3,1fr\)/);
+  assert.match(comfy, /minimax_h3_ref2va_pruned_w4a8_mixed\.safetensors/);
+  assert.match(comfy, /continuation \? "hybrid_auto" : "ref2va_full"/);
+  assert.match(comfy, /attention_mode: "existing"/);
+  assert.match(comfy, /mlp_chunk_tokens: 4096/);
+  assert.match(comfy, /steps: 8/);
+  assert.match(comfy, /H3CooledTurboSampler/);
+  assert.match(comfy, /native: \{ "16:9": \[1344, 768\]/);
+  assert.match(comfy, /index \+ \(continuation \? 2 : 1\)/);
+  assert.match(api, /mode == "Ref2VA"/);
+  assert.match(api, /subject_definitions, summary, retention_analysis, detailed_description/);
+  assert.match(api, /reference_image_/);
+  assert.match(api, /description = item\.get\("description", ""\)/);
+  assert.match(api, /Infer only the clearly visible identity, appearance, or environmental role/);
+  assert.doesNotMatch(api, /not description\.strip\(\)/);
+  assert.match(api, /"safe", "clear", "p480", "native"/);
+});
+
+test("builds Ref2VA continuation from the previous final frame and original references", async () => {
+  const [{ buildReferenceWorkflow }, page, api] = await Promise.all([
+    import(new URL("../lib/comfy.ts", import.meta.url)),
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../../ComfyUI/custom_nodes/h3_studio_api.py", import.meta.url), "utf8"),
+  ]);
+  const graph = buildReferenceWorkflow({
+    prompt: "detailed_description:\nContinue the action.",
+    profile: "cooled-turbo-8",
+    resolution: "native",
+    inputMode: "reference",
+    duration: 5,
+    aspect: "16:9",
+    sound: false,
+    chainId: "test-chain",
+  }, ["reference-one.png", "reference-two.png"], "previous-final-frame.png");
+
+  assert.equal(graph["104"].inputs.workflow_mode, "hybrid_auto");
+  assert.deepEqual(graph["104"].inputs.image_1, ["199", 0]);
+  assert.deepEqual(graph["104"].inputs.image_2, ["200", 0]);
+  assert.deepEqual(graph["104"].inputs.image_3, ["201", 0]);
+  assert.equal(graph["199"].inputs.image, "previous-final-frame.png");
+  assert.match(graph["92"].inputs.filename_prefix, /^h3_segments\/test-chain\//);
+  assert.equal("audio" in graph["91"].inputs, false);
+  assert.match(page, /沿用原本.*張參考圖與標籤/);
+  assert.match(api, /routes\.post\("\/h3-studio\/continuation-frame"\)/);
+  assert.match(api, /trim=start_frame=\{trim_start_frames\}/);
+  assert.match(api, /output_is_extendable/);
+});
+
+test("loads saved generation settings without automatically generating", async () => {
+  const [page, styles, comfy, api] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../lib/comfy.ts", import.meta.url), "utf8"),
+    readFile(new URL("../../ComfyUI/custom_nodes/h3_studio_api.py", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(page, /"再做一次"/);
+  assert.match(page, /async function redoVideo/);
+  assert.match(page, /setPrompt\(video\.prompt\)/);
+  assert.match(page, /setProfile\(video\.profile\)/);
+  assert.match(page, /setResolution\(video\.resolution\)/);
+  assert.match(page, /setSoundEnabled\(video\.sound\)/);
+  assert.match(page, /restoreInputImage/);
+  assert.doesNotMatch(page, /async function redoVideo[\s\S]*?\bgenerate\(\)/);
+  assert.match(styles, /\.menu-popover \.redo-action/);
+  assert.match(styles, /\.notice\.success/);
+  assert.match(comfy, /sourceMode: runOptions\.sourceMode/);
+  assert.match(comfy, /firstImagePath: runOptions\.inputMode/);
+  assert.match(comfy, /lastImagePath: runOptions\.inputMode/);
+  assert.match(comfy, /export function inputImageUrl/);
+  assert.match(api, /data\.get\("duration"\)/);
+  assert.match(api, /data\.get\("sourceMode"\)/);
+  assert.match(api, /"firstImagePath", "lastImagePath"/);
+});
+
+test("highlights only established reference tags in the prompt editor", async () => {
+  const [page, styles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(page, /reference\.file && reference\.label\.trim\(\)/);
+  assert.match(page, /function highlightReferenceTags/);
+  assert.match(page, /\(\?!\[\\\\p\{L\}\\\\p\{N\}_-\]\)/);
+  assert.match(page, /className="prompt-tag-highlight"/);
+  assert.match(page, /promptHighlightRef\.current\.scrollTop/);
+  assert.match(page, /promptHighlightRef\.current\.scrollLeft/);
+  assert.match(styles, /\.prompt-editor\.has-highlights textarea \{ color: transparent; caret-color:/);
+  assert.match(styles, /\.prompt-highlight \{[^}]*white-space: pre-wrap/);
+  assert.match(styles, /\.prompt-tag-highlight \{[^}]*color: #b69cff/);
+});

@@ -1,0 +1,36 @@
+# Local Python and JavaScript environments
+.venv/
+venv/
+**/node_modules/
+
+# ComfyUI runtime and user data
+ComfyUI/input/
+ComfyUI/output/
+ComfyUI/temp/
+ComfyUI/models/
+ComfyUI/user/
+
+# Generated Studio data
+**/outputs/
+**/work/
+**/.next/
+**/.vinext/
+**/dist/
+**/.wrangler/
+
+# Local configuration and logs
+.env*
+*.log
+.claude/
+
+# Large model and media files
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.bin
+*.gguf
+*.mp4
+*.mov
+*.webm
+*.avi

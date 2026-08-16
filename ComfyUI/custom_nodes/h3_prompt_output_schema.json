@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "optimizedPrompt": {
+      "type": "string"
+    }
+  },
+  "required": ["optimizedPrompt"],
+  "additionalProperties": false
+}
