@@ -2,6 +2,8 @@
 /.venv/
 venv/
 **/node_modules/
+__pycache__/
+*.pyc
 
 # ComfyUI runtime. The Studio nodes live in integrations/ and are loaded from
 # there through a directory junction, so nothing under ComfyUI/ is tracked.

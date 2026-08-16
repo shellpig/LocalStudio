@@ -42,7 +42,7 @@ test("keeps Motion Context continuation wiring intact", async () => {
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../lib/comfy.ts", import.meta.url), "utf8"),
-    readFile(new URL("../../ComfyUI/custom_nodes/h3_studio_api.py", import.meta.url), "utf8"),
+    readFile(new URL("../../integrations/ComfyUI-H3-Studio/h3_studio_api.py", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /下載影片/);
@@ -105,7 +105,7 @@ test("adds Ref2VA references without replacing existing generation flows", async
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../lib/comfy.ts", import.meta.url), "utf8"),
-    readFile(new URL("../../ComfyUI/custom_nodes/h3_studio_api.py", import.meta.url), "utf8"),
+    readFile(new URL("../../integrations/ComfyUI-H3-Studio/h3_studio_api.py", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /參考生影片/);
@@ -137,7 +137,7 @@ test("builds Ref2VA continuation from the previous final frame and original refe
   const [{ buildReferenceWorkflow }, page, api] = await Promise.all([
     import(new URL("../lib/comfy.ts", import.meta.url)),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../../ComfyUI/custom_nodes/h3_studio_api.py", import.meta.url), "utf8"),
+    readFile(new URL("../../integrations/ComfyUI-H3-Studio/h3_studio_api.py", import.meta.url), "utf8"),
   ]);
   const graph = buildReferenceWorkflow({
     prompt: "detailed_description:\nContinue the action.",
@@ -168,7 +168,7 @@ test("loads saved generation settings without automatically generating", async (
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../lib/comfy.ts", import.meta.url), "utf8"),
-    readFile(new URL("../../ComfyUI/custom_nodes/h3_studio_api.py", import.meta.url), "utf8"),
+    readFile(new URL("../../integrations/ComfyUI-H3-Studio/h3_studio_api.py", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /"再做一次"/);
