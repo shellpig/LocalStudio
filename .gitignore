@@ -1,27 +1,42 @@
 # Local Python and JavaScript environments
-.venv/
+/.venv/
 venv/
 **/node_modules/
 
-# ComfyUI runtime and user data
-ComfyUI/input/
-ComfyUI/output/
-ComfyUI/temp/
-ComfyUI/models/
-ComfyUI/user/
+# ComfyUI runtime. The Studio nodes live in integrations/ and are loaded from
+# there through a directory junction, so nothing under ComfyUI/ is tracked.
+/ComfyUI/
 
-# Generated Studio data
-**/outputs/
-**/work/
+# Superseded publish copy, replaced by this repository
+/LocalStudio-publish/
+
+# Local tooling configuration
+/.claude/
+
+# Build output
 **/.next/
 **/.vinext/
 **/dist/
 **/.wrangler/
+**/outputs/
+**/work/
+*.tsbuildinfo
+
+# Unused starter README left over from the vinext template
+/h3-local-studio/README.md
+
+# Local notes that are specific to one machine
+/H3_ENV_BEFORE.md
+/H3_ComfyUI_RTX4080Laptop_12GB_Codex_Setup.md
+/requirements-before-h3.txt
+
+# Office documents and their lock files
+*.docx
+~$*
 
 # Local configuration and logs
 .env*
 *.log
-.claude/
 
 # Large model and media files
 *.safetensors
