@@ -62,9 +62,12 @@ button { color: inherit; }
 .composer textarea:disabled { color: #85818f; }
 .prompt-editor { position: relative; }
 .prompt-editor textarea { position: relative; z-index: 1; display: block; }
-.prompt-editor.has-highlights textarea { color: transparent; caret-color: #e9e8ee; -webkit-text-fill-color: transparent; }
+/* The overlay never scrolls, so the textarea must reserve its scrollbar gutter
+   unconditionally. Without this the two boxes wrap at different widths once the
+   prompt overflows, and the highlighted text drifts away from the caret. */
+.prompt-editor.has-highlights textarea { color: transparent; caret-color: #e9e8ee; -webkit-text-fill-color: transparent; scrollbar-gutter: stable; }
 .prompt-editor.has-highlights textarea::placeholder { color: #5e606c; -webkit-text-fill-color: #5e606c; }
-.prompt-highlight { position: absolute; z-index: 0; inset: 0; overflow: hidden; padding: 25px 28px 18px; color: #e9e8ee; line-height: 1.75; pointer-events: none; white-space: pre-wrap; overflow-wrap: break-word; }
+.prompt-highlight { position: absolute; z-index: 0; inset: 0; overflow: hidden; scrollbar-gutter: stable; padding: 25px 28px 18px; color: #e9e8ee; line-height: 1.75; pointer-events: none; white-space: pre-wrap; overflow-wrap: break-word; }
 .prompt-tag-highlight { border-radius: 4px; background: rgba(118,82,255,.12); color: #b69cff; text-shadow: 0 0 12px rgba(155,120,255,.28); }
 .prompt-tools { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-top: 1px solid #20212a; padding: 11px 20px; background: rgba(10,11,16,.5); }
 .prompt-tools > div { display: flex; gap: 8px; }

@@ -242,6 +242,8 @@ test("highlights only established reference tags in the prompt editor", async ()
   assert.match(page, /promptHighlightRef\.current\.scrollTop/);
   assert.match(page, /promptHighlightRef\.current\.scrollLeft/);
   assert.match(styles, /\.prompt-editor\.has-highlights textarea \{ color: transparent; caret-color:/);
+  assert.match(styles, /\.prompt-editor\.has-highlights textarea \{[^}]*scrollbar-gutter: stable/);
+  assert.match(styles, /\.prompt-highlight \{[^}]*scrollbar-gutter: stable/);
   assert.match(styles, /\.prompt-highlight \{[^}]*white-space: pre-wrap/);
   assert.match(styles, /\.prompt-tag-highlight \{[^}]*color: #b69cff/);
 });
