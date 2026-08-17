@@ -5,8 +5,8 @@ type PromptGraph = Record<string, GraphNode>;
 
 export type GenerationOptions = {
   prompt: string;
-  profile: "fast" | "cooled-fast" | "cooled-turbo-8" | "quality" | "safe-long";
-  resolution: "safe" | "clear" | "p480" | "native";
+  profile: "fast" | "cooled-fast" | "cooled-turbo-8" | "quality" | "safe-long" | "low-vram";
+  resolution: "safe" | "clear" | "p480" | "p540" | "native";
   sourceMode?: "text" | "image" | "reference";
   inputMode?: "standard" | "reference";
   duration: number;
@@ -69,6 +69,7 @@ const DIMENSIONS = {
   safe: { "16:9": [608, 352], "9:16": [352, 608], "1:1": [448, 448] },
   clear: { "16:9": [736, 416], "9:16": [416, 736], "1:1": [544, 544] },
   p480: { "16:9": [864, 480], "9:16": [480, 864], "1:1": [640, 640] },
+  p540: { "16:9": [960, 544], "9:16": [544, 960], "1:1": [736, 736] },
   native: { "16:9": [1344, 768], "9:16": [768, 1344], "1:1": [1024, 1024] },
 } as const;
 
@@ -76,6 +77,7 @@ const TARGET_PIXELS = {
   safe: 608 * 352,
   clear: 736 * 416,
   p480: 864 * 480,
+  p540: 960 * 544,
   native: 1344 * 768,
 } as const;
 
@@ -135,6 +137,7 @@ export function buildWorkflow(options: GenerationOptions, uploadedFirstImage?: s
   const cooledFast = options.profile === "cooled-fast";
   const cooledTurbo8 = options.profile === "cooled-turbo-8";
   const safeLong = options.profile === "safe-long";
+  const lowVram = options.profile === "low-vram";
   const continuation = options.continuationSource;
   const chainId = options.chainId ?? "preview";
   const clipIndex = options.clipIndex ?? 1;
@@ -165,7 +168,7 @@ export function buildWorkflow(options: GenerationOptions, uploadedFirstImage?: s
     graph["17"] = node("KSamplerSelect", { sampler_name: "res_multistep" }, "原生採樣器");
     graph["123"] = node("H3CooledSampler", { sampler: ["17", 0] }, "H3 QUALITY 冷卻採樣器");
   } else {
-    graph["120"] = node("MiniMaxH3TurboLoRA", { model: ["6", 0], lora_name: "minimax_h3_turbo_v4_step600_ema.safetensors", strength: 1, low_vram: safeLong }, "H3 Turbo LoRA");
+    graph["120"] = node("MiniMaxH3TurboLoRA", { model: ["6", 0], lora_name: "minimax_h3_turbo_v4_step600_ema.safetensors", strength: 1, low_vram: safeLong || lowVram }, "H3 Turbo LoRA");
     graph["121"] = node("MiniMaxH3TurboSampler", {}, "H3 Turbo 採樣器");
     if (cooledFast || cooledTurbo8) graph["122"] = node("H3CooledTurboSampler", { sampler: ["121", 0] }, "H3 冷卻採樣器");
   }
@@ -249,7 +252,7 @@ export function buildReferenceWorkflow(options: GenerationOptions, uploadedRefer
       first_frame_blend_frames: 3, conditioning_mode: "auto_refs", workflow_mode: continuation ? "hybrid_auto" : "ref2va_full",
     }, continuation ? "Ref2VA 尾幀銜定延伸" : "Ref2VA 參考設定"),
     "119": node("MiniMaxH3MemoryEfficientSageAttentionPatch", { model: ["120", 0] }, "SageAttention 省顯存"),
-    "120": node("MiniMaxH3TurboLoRA", { model: ["6", 0], lora_name: "minimax_h3_turbo_v4_step600_ema.safetensors", strength: 1, low_vram: false }, "H3 Turbo LoRA"),
+    "120": node("MiniMaxH3TurboLoRA", { model: ["6", 0], lora_name: "minimax_h3_turbo_v4_step600_ema.safetensors", strength: 1, low_vram: options.profile === "low-vram" }, "H3 Turbo LoRA"),
     "121": node("MiniMaxH3TurboSampler", {}, "H3 Turbo 採樣器"),
     "122": node("H3CooledTurboSampler", { sampler: ["121", 0] }, "每步休息 12 秒"),
     "150": node("MiniMaxH3LatentLabLongMediaSampler", {
@@ -511,7 +514,7 @@ export async function createVideo(
     chainId,
     clipIndex,
     latentPath,
-    profile: source ? (referenceContinuation ? "cooled-turbo-8" : "quality") : options.profile,
+    profile: source ? (referenceContinuation ? (source.profile === "low-vram" ? "low-vram" : "cooled-turbo-8") : "quality") : options.profile,
     resolution: source?.resolution ?? options.resolution,
     sound: source?.sound ?? options.sound,
     inputMode: source?.inputMode ?? options.inputMode,

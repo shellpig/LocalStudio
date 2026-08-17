@@ -33,6 +33,7 @@ test("server-renders H3 Local Studio controls", async () => {
   assert.match(html, /讓靈感，躍然成片/);
   assert.match(html, /608 × 352/);
   assert.match(html, /864 × 480/);
+  assert.match(html, /960 × 544/);
   assert.match(html, /開啟 · 立體聲/);
   assert.match(html, /關閉 · 無音軌/);
 });
@@ -93,7 +94,7 @@ test("keeps Motion Context continuation wiring intact", async () => {
   assert.match(comfy, /MiniMaxH3MotionContextLoadLatent/);
   assert.match(comfy, /MiniMaxH3MotionContextTrim/);
   assert.match(comfy, /context_length: "22"/);
-  assert.match(comfy, /referenceContinuation \? "cooled-turbo-8" : "quality"/);
+  assert.match(comfy, /referenceContinuation \? \(source\.profile === "low-vram" \? "low-vram" : "cooled-turbo-8"\) : "quality"/);
   assert.match(comfy, /inputs\.first_frame = \["130", 0\]/);
   assert.match(comfy, /inputs\.last_frame = \["131", 0\]/);
   assert.match(api, /routes\.post\("\/h3-studio\/concat"\)/);
@@ -130,7 +131,45 @@ test("adds Ref2VA references without replacing existing generation flows", async
   assert.match(api, /description = item\.get\("description", ""\)/);
   assert.match(api, /Infer only the clearly visible identity, appearance, or environmental role/);
   assert.doesNotMatch(api, /not description\.strip\(\)/);
-  assert.match(api, /"safe", "clear", "p480", "native"/);
+  assert.match(api, /"safe", "clear", "p480", "p540", "native"/);
+});
+
+test("adds a low-VRAM profile and a 540P step between 480P and native", async () => {
+  const [{ buildWorkflow, buildReferenceWorkflow, resolveOutputDimensions }, page, comfy, api] = await Promise.all([
+    import(new URL("../lib/comfy.ts", import.meta.url)),
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/comfy.ts", import.meta.url), "utf8"),
+    readFile(new URL("../../integrations/ComfyUI-H3-Studio/h3_studio_api.py", import.meta.url), "utf8"),
+  ]);
+
+  assert.deepEqual(resolveOutputDimensions({ resolution: "p540", aspect: "16:9" }), [960, 544]);
+  assert.deepEqual(resolveOutputDimensions({ resolution: "p540", aspect: "9:16" }), [544, 960]);
+  assert.deepEqual(resolveOutputDimensions({ resolution: "p540", aspect: "1:1" }), [736, 736]);
+
+  const standard = buildWorkflow({
+    prompt: "A quiet street.", profile: "low-vram", resolution: "p540",
+    duration: 5, aspect: "16:9", sound: true,
+  });
+  assert.equal(standard["120"].inputs.low_vram, true);
+  assert.equal(standard["9"].inputs.steps, 6);
+  assert.equal(standard["104"].inputs.width, 960);
+  assert.equal(standard["104"].inputs.height, 544);
+
+  const reference = buildReferenceWorkflow({
+    prompt: "detailed_description:\nA quiet street.", profile: "low-vram", resolution: "p540",
+    inputMode: "reference", duration: 15, aspect: "16:9", sound: true, chainId: "test-chain",
+  }, ["reference-one.png"]);
+  assert.equal(reference["120"].inputs.low_vram, true);
+  assert.equal(reference["104"].inputs.width, 960);
+  assert.equal(reference["104"].inputs.height, 544);
+  assert.equal(reference["9"].inputs.steps, 8);
+
+  assert.match(page, /低顯存 · Turbo 6 步／LoRA merge/);
+  assert.match(page, /低顯存 · Turbo 8 步／LoRA merge/);
+  assert.match(page, /\{sizeLabels\.p540\} · 540P/);
+  assert.match(comfy, /p540: \{ "16:9": \[960, 544\], "9:16": \[544, 960\], "1:1": \[736, 736\] \}/);
+  assert.match(comfy, /p540: 960 \* 544/);
+  assert.match(api, /"quality", "safe-long", "low-vram"/);
 });
 
 test("builds Ref2VA continuation from the previous final frame and original references", async () => {

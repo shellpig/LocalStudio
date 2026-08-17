@@ -137,7 +137,7 @@ export default function Home() {
       });
       return `${width} × ${height}`;
     };
-    return { safe: label("safe"), clear: label("clear"), p480: label("p480"), native: label("native") };
+    return { safe: label("safe"), clear: label("clear"), p480: label("p480"), p540: label("p540"), native: label("native") };
   }, [anchorImageDimensions, aspect, continuationSource, sourceMode]);
 
   const outputSize = sizeLabels[resolution];
@@ -726,24 +726,38 @@ export default function Home() {
                 <div className="controls">
                   <label>
                     <span>模式</span>
-                    <select value={profile} onChange={(event) => chooseProfile(event.target.value as GenerationOptions["profile"])} disabled={Boolean(continuationSource) || sourceMode === "reference"}>
-                      <option value="fast">FAST · Turbo 6 步</option>
-                      <option value="cooled-fast">COOLED FAST · Turbo 6 步／分段降溫</option>
-                      <option value="cooled-turbo-8">COOLED TURBO 8 · Turbo 8 步／每步降溫</option>
-                      <option value="quality">QUALITY · 原生 20 步／每步降溫</option>
-                      <option value="safe-long">安全長片 · 低解析生成／480P 輸出</option>
+                    <select value={profile} onChange={(event) => chooseProfile(event.target.value as GenerationOptions["profile"])} disabled={Boolean(continuationSource)}>
+                      {sourceMode === "reference" ? (
+                        <>
+                          <option value="cooled-turbo-8">COOLED TURBO 8 · Turbo 8 步／每步降溫</option>
+                          <option value="low-vram">低顯存 · Turbo 8 步／LoRA merge</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="fast">FAST · Turbo 6 步</option>
+                          <option value="cooled-fast">COOLED FAST · Turbo 6 步／分段降溫</option>
+                          <option value="cooled-turbo-8">COOLED TURBO 8 · Turbo 8 步／每步降溫</option>
+                          <option value="quality">QUALITY · 原生 20 步／每步降溫</option>
+                          <option value="low-vram">低顯存 · Turbo 6 步／LoRA merge</option>
+                          <option value="safe-long">安全長片 · 低解析生成／480P 輸出</option>
+                        </>
+                      )}
                     </select>
                   </label>
                   <label>
                     <span>解析度</span>
-                    <select value={resolution} onChange={(event) => setResolution(event.target.value as GenerationOptions["resolution"])} disabled={Boolean(continuationSource) || profile === "safe-long" || sourceMode === "reference"}>
+                    <select value={resolution} onChange={(event) => setResolution(event.target.value as GenerationOptions["resolution"])} disabled={Boolean(continuationSource) || profile === "safe-long"}>
                       {sourceMode === "reference" ? (
-                        <option value="native">{sizeLabels.native} · 原生 H3</option>
+                        <>
+                          <option value="p540">{sizeLabels.p540} · 540P</option>
+                          <option value="native">{sizeLabels.native} · 原生 H3</option>
+                        </>
                       ) : (
                         <>
                           <option value="safe">{sizeLabels.safe} · 省顯存</option>
                           <option value="clear">{sizeLabels.clear} · 清晰</option>
                           <option value="p480">{sizeLabels.p480} · 480P</option>
+                          <option value="p540">{sizeLabels.p540} · 540P</option>
                         </>
                       )}
                     </select>
@@ -800,6 +814,7 @@ export default function Home() {
                 {profile === "cooled-fast" && <span> · 第 1～6 步完成後各暫停 12 秒，讓 CPU 與 GPU 降溫</span>}
                 {profile === "cooled-turbo-8" && <span> · 第 1～8 步完成後各暫停 12 秒，額外增加約 96 秒冷卻時間</span>}
                 {profile === "quality" && <span> · 第 1～20 步完成後各暫停 12 秒，額外增加約 4 分鐘冷卻時間</span>}
+                {profile === "low-vram" && <span> · Turbo LoRA 改用 merge 模式，省下採樣時最大的一筆顯存配置；長片較不易爆顯存，畫面略柔</span>}
                 {resolution !== "safe" && <span> · 較高解析度的顯存與時間需求較高</span>}
                 {extremeImageRatio && <span> · 極端圖片比例可能降低生成品質</span>}
               </div>

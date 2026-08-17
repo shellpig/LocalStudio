@@ -114,9 +114,9 @@ def validated_metadata(data):
     if isinstance(latent_path, str) and latent_path.startswith("h3_context/") and ".." not in Path(latent_path).parts:
         metadata["latentPath"] = latent_path.replace("\\", "/")
 
-    if data.get("profile") in {"fast", "cooled-fast", "cooled-turbo-8", "quality", "safe-long"}:
+    if data.get("profile") in {"fast", "cooled-fast", "cooled-turbo-8", "quality", "safe-long", "low-vram"}:
         metadata["profile"] = data["profile"]
-    if data.get("resolution") in {"safe", "clear", "p480", "native"}:
+    if data.get("resolution") in {"safe", "clear", "p480", "p540", "native"}:
         metadata["resolution"] = data["resolution"]
     if isinstance(data.get("width"), int) and 128 <= data["width"] <= 2048:
         metadata["width"] = data["width"]
