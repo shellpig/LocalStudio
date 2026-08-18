@@ -238,3 +238,26 @@ button { color: inherit; }
   .video-grid { grid-template-columns: 1fr; }
   .section-heading, .works-heading { align-items: flex-start; }
 }
+
+.seed-input { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); padding: 9px 11px; color: var(--text); font-size: 12px; }
+.seed-input::placeholder { color: #6d6f7c; }
+.seed-input:focus { border-color: var(--purple); outline: none; }
+.seed-line { display: flex; align-items: center; gap: 6px; }
+.seed-line code { font-family: Consolas, monospace; color: #a98cff; user-select: all; }
+.seed-line button { border: 0; background: none; padding: 0; color: #776e7b; font-size: 10px; text-decoration: underline; cursor: pointer; }
+.seed-line button:hover { color: var(--text); }
+
+.lora-stack-section { margin: 16px 24px 0; border: 1px solid var(--line); border-radius: 12px; background: #101117; padding: 13px 15px; }
+.lora-stack-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.lora-stack-heading strong { font-size: 12px; }
+.lora-stack-heading p { margin: 3px 0 0; color: #858794; font-size: 11px; }
+.lora-stack-heading > button { flex: 0 0 auto; border: 1px solid #4f4279; border-radius: 8px; background: #211b35; padding: 8px 11px; color: #c7b7ff; font-size: 11px; cursor: pointer; }
+.lora-stack-heading > button:disabled { opacity: .4; cursor: not-allowed; }
+.lora-row { display: flex; align-items: center; gap: 9px; margin-top: 10px; }
+.lora-order { flex: 0 0 auto; display: grid; place-items: center; width: 21px; height: 21px; border-radius: 6px; background: #211b35; color: #a98cff; font-size: 10px; }
+.lora-row > select { flex: 1 1 auto; min-width: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); padding: 8px 10px; color: var(--text); font-size: 12px; }
+.lora-strength { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; }
+.lora-strength input { width: 74px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); padding: 8px 9px; color: var(--text); font-size: 12px; }
+.lora-row > button { flex: 0 0 auto; border: 1px solid #343641; border-radius: 8px; background: transparent; padding: 8px 10px; color: #8b8d9b; font-size: 11px; cursor: pointer; }
+.lora-row > button:hover { border-color: #55404a; color: #e0b4b4; }
+.lora-stack-note { margin: 11px 0 0; color: #7f8290; font-size: 10px; line-height: 1.6; }

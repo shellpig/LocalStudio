@@ -11,6 +11,10 @@ export type GenerationOptions = {
   inputMode?: "standard" | "reference";
   duration: number;
   aspect: "16:9" | "9:16" | "1:1";
+  /** Reuse an exact seed. Omitted means a fresh random one. */
+  seed?: number;
+  /** LoRAs stacked after the Turbo LoRA, applied in order. */
+  extraLoras?: ExtraLora[];
   sound: boolean;
   sourceWidth?: number;
   sourceHeight?: number;
@@ -27,6 +31,8 @@ export type GeneratedVideo = {
   subfolder: string;
   type: string;
   generationSeconds?: number;
+  seed?: number;
+  extraLoras?: ExtraLora[];
   promptId?: string;
   modifiedAt?: number;
   chainId?: string;
@@ -48,6 +54,10 @@ export type GeneratedVideo = {
   referenceFiles?: string[];
   referenceDefinitions?: ReferenceDefinition[];
 };
+
+export type ExtraLora = { name: string; strength: number };
+
+export const TURBO_LORA = "minimax_h3_turbo_v4_step600_ema.safetensors";
 
 export type PromptEngine = "codex" | "grok";
 
@@ -118,6 +128,29 @@ export function resolveGenerationDimensions(options: GenerationOptions): [number
   return dimensionsForSource(options.sourceWidth, options.sourceHeight, 640 * 352);
 }
 
+/**
+ * Chains the extra LoRAs after `source` and returns the new model link.
+ *
+ * Every node is forced to merge (low_vram). The bypass path stores its adapters
+ * under one shared injection key, so a second bypass node would overwrite the
+ * first and silently drop it. Merge uses add_patches, which accumulates.
+ */
+function stackExtraLoras(graph: PromptGraph, extras: ExtraLora[], source: [string, number]): [string, number] {
+  let model = source;
+  extras.forEach((extra, index) => {
+    const id = String(600 + index);
+    graph[id] = node("MiniMaxH3TurboLoRA", {
+      model, lora_name: extra.name, strength: extra.strength, low_vram: true,
+    }, `額外 LoRA ${index + 1}`);
+    model = [id, 0];
+  });
+  return model;
+}
+
+function randomSeed() {
+  return Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
+}
+
 function node(classType: string, inputs: Record<string, unknown>, title: string): GraphNode {
   return { class_type: classType, inputs, _meta: { title } };
 }
@@ -151,7 +184,7 @@ export function buildWorkflow(options: GenerationOptions, uploadedFirstImage?: s
     "11": node("VAELoader", { vae_name: quality ? "minimax_h3_video_vae_fp16.safetensors" : "minimax_h3_video_vae_int8_convrot.safetensors" }, "影片 VAE"),
     "13": node("CLIPLoader", { clip_name: "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", type: "minimax", device: "default" }, "文字編碼器"),
     "14": node("SamplerCustomAdvanced", { noise: ["15", 0], guider: ["16", 0], sampler: quality ? ["123", 0] : cooledFast || cooledTurbo8 ? ["122", 0] : ["121", 0], sigmas: ["9", 0], latent_image: ["104", 1] }, "H3 採樣"),
-    "15": node("RandomNoise", { noise_seed: Math.floor(Math.random() * Number.MAX_SAFE_INTEGER) }, "隨機種子"),
+    "15": node("RandomNoise", { noise_seed: options.seed ?? randomSeed() }, "隨機種子"),
     "16": node("BasicGuider", { model: ["119", 0], conditioning: ["104", 0] }, "引導"),
     "23": node("VAEDecodeAudio", { samples: ["14", 0], vae: ["24", 0] }, "解碼聲音"),
     "24": node("VAELoader", { vae_name: "minimax_h3_audio_vae_fp32.safetensors" }, "聲音 VAE"),
@@ -168,9 +201,15 @@ export function buildWorkflow(options: GenerationOptions, uploadedFirstImage?: s
     graph["17"] = node("KSamplerSelect", { sampler_name: "res_multistep" }, "原生採樣器");
     graph["123"] = node("H3CooledSampler", { sampler: ["17", 0] }, "H3 QUALITY 冷卻採樣器");
   } else {
-    graph["120"] = node("MiniMaxH3TurboLoRA", { model: ["6", 0], lora_name: "minimax_h3_turbo_v4_step600_ema.safetensors", strength: 1, low_vram: safeLong || lowVram }, "H3 Turbo LoRA");
+    graph["120"] = node("MiniMaxH3TurboLoRA", { model: ["6", 0], lora_name: TURBO_LORA, strength: 1, low_vram: safeLong || lowVram }, "H3 Turbo LoRA");
     graph["121"] = node("MiniMaxH3TurboSampler", {}, "H3 Turbo 採樣器");
     if (cooledFast || cooledTurbo8) graph["122"] = node("H3CooledTurboSampler", { sampler: ["121", 0] }, "H3 冷卻採樣器");
+  }
+
+  const extras = options.extraLoras ?? [];
+  if (extras.length) {
+    if (graph["120"]) graph["120"].inputs.low_vram = true;
+    graph["119"].inputs.model = stackExtraLoras(graph, extras, quality ? ["6", 0] : ["120", 0]);
   }
 
   if (!options.sound) {
@@ -252,12 +291,12 @@ export function buildReferenceWorkflow(options: GenerationOptions, uploadedRefer
       first_frame_blend_frames: 3, conditioning_mode: "auto_refs", workflow_mode: continuation ? "hybrid_auto" : "ref2va_full",
     }, continuation ? "Ref2VA 尾幀銜定延伸" : "Ref2VA 參考設定"),
     "119": node("MiniMaxH3MemoryEfficientSageAttentionPatch", { model: ["120", 0] }, "SageAttention 省顯存"),
-    "120": node("MiniMaxH3TurboLoRA", { model: ["6", 0], lora_name: "minimax_h3_turbo_v4_step600_ema.safetensors", strength: 1, low_vram: options.profile === "low-vram" }, "H3 Turbo LoRA"),
+    "120": node("MiniMaxH3TurboLoRA", { model: ["6", 0], lora_name: TURBO_LORA, strength: 1, low_vram: options.profile === "low-vram" }, "H3 Turbo LoRA"),
     "121": node("MiniMaxH3TurboSampler", {}, "H3 Turbo 採樣器"),
     "122": node("H3CooledTurboSampler", { sampler: ["121", 0] }, "每步休息 12 秒"),
     "150": node("MiniMaxH3LatentLabLongMediaSampler", {
       initial_av: ["104", 1], long_media_plan: ["104", 2], guider: ["16", 0], sampler: ["122", 0],
-      sigmas: ["9", 0], seed: Math.floor(Math.random() * Number.MAX_SAFE_INTEGER),
+      sigmas: ["9", 0], seed: options.seed ?? randomSeed(),
       video_context_denoise: 0, audio_context_denoise: 0, offload_completed_segments: true,
       mlp_chunk_tokens: 4096, attention_mode: "existing", sol_tau_start: 1.3, sol_tau_end: 0.8,
       sol_curve: "linear", sol_min_tokens: 4096, sol_dense_percent: 0, sol_sink_conditioning: "exact_kv",
@@ -268,6 +307,12 @@ export function buildReferenceWorkflow(options: GenerationOptions, uploadedRefer
       step_boundary_cleanup_mb: 2048, sampler_mode: "manual",
     }, "Long Media 採樣"),
   };
+
+  const extras = options.extraLoras ?? [];
+  if (extras.length) {
+    graph["120"].inputs.low_vram = true;
+    graph["119"].inputs.model = stackExtraLoras(graph, extras, ["120", 0]);
+  }
 
   if (!options.sound) delete graph["91"].inputs.audio;
   if (continuationFrame) {
@@ -374,10 +419,25 @@ function referenceMetadataFromHistory(entry: { prompt?: unknown }) {
     prompt,
     duration: typeof setup.inputs.manual_duration === "number" ? setup.inputs.manual_duration : undefined,
     aspect: inferAspect(setup.inputs.width, setup.inputs.height),
+    seed: seedFromGraph(graph, "MiniMaxH3LatentLabLongMediaSampler", "seed"),
+    extraLoras: extraLorasFromGraph(graph),
     referenceFiles,
     referenceDefinitions: referenceDefinitionsFromPrompt(prompt, referenceFiles.length),
     extendable: referenceFiles.length <= 8,
   };
+}
+
+function extraLorasFromGraph(graph: PromptGraph): ExtraLora[] | undefined {
+  const found = Object.values(graph)
+    .filter((item) => item.class_type === "MiniMaxH3TurboLoRA" && item.inputs.lora_name !== TURBO_LORA)
+    .map((item) => ({ name: String(item.inputs.lora_name), strength: Number(item.inputs.strength) }));
+  return found.length ? found : undefined;
+}
+
+function seedFromGraph(graph: PromptGraph, classType: string, input: string) {
+  const source = Object.values(graph).find((item) => item.class_type === classType);
+  const value = source?.inputs[input];
+  return typeof value === "number" ? value : undefined;
 }
 
 function linkedInputImage(graph: PromptGraph, setup: GraphNode, input: "first_frame" | "last_frame") {
@@ -412,6 +472,8 @@ function standardMetadataFromHistory(entry: { prompt?: unknown }) {
     aspect: inferAspect(setup.inputs.width, setup.inputs.height),
     firstImagePath,
     lastImagePath,
+    seed: seedFromGraph(graph, "RandomNoise", "noise_seed"),
+    extraLoras: extraLorasFromGraph(graph),
   };
 }
 
@@ -455,6 +517,14 @@ function videosFromHistory(history: Record<string, unknown>): GeneratedVideo[] {
     }
   }
   return found.reverse();
+}
+
+/** The LoRAs ComfyUI can load, minus the Turbo LoRA the workflow always applies. */
+export async function getAvailableLoras(): Promise<string[]> {
+  const response = await request("/object_info/MiniMaxH3TurboLoRA");
+  const info = (await response.json()) as Record<string, { input?: { required?: { lora_name?: unknown[] } } }>;
+  const names = info.MiniMaxH3TurboLoRA?.input?.required?.lora_name?.[0];
+  return Array.isArray(names) ? names.filter((name): name is string => typeof name === "string" && name !== TURBO_LORA) : [];
 }
 
 export async function getRecentVideos() {
@@ -511,6 +581,7 @@ export async function createVideo(
   const latentPath = source?.latentPath ?? options.latentPath ?? `h3_context/${chainId}`;
   const runOptions: GenerationOptions = {
     ...options,
+    seed: options.seed ?? randomSeed(),
     chainId,
     clipIndex,
     latentPath,
@@ -568,6 +639,8 @@ export async function createVideo(
     segment = { ...(await upscaleResponse.json() as GeneratedVideo), promptId: segment.promptId, generationSeconds: segment.generationSeconds };
   }
   const metadata = {
+    seed: runOptions.seed,
+    extraLoras: runOptions.extraLoras,
     generationSeconds: segment.generationSeconds ?? Math.max(1, Math.round((Date.now() - startedAt) / 1000)),
     chainId,
     clipIndex,

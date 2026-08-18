@@ -8,6 +8,8 @@ import {
   deleteVideo,
   GeneratedVideo,
   GenerationOptions,
+  ExtraLora,
+  getAvailableLoras,
   getRecentVideos,
   inputImageUrl,
   optimizeVideoPrompt,
@@ -32,6 +34,7 @@ type ReferenceImageDraft = {
   label: string;
   description: string;
 };
+type ExtraLoraDraft = ExtraLora & { id: number };
 type CropTarget = { kind: "first" } | { kind: "last" } | { kind: "reference"; id: number };
 
 const CROP_ASPECT: Record<GenerationOptions["aspect"], number> = { "16:9": 16 / 9, "9:16": 9 / 16, "1:1": 1 };
@@ -54,6 +57,11 @@ export default function Home() {
   const [duration, setDuration] = useState(5);
   const [aspect, setAspect] = useState<GenerationOptions["aspect"]>("16:9");
   const [soundEnabled, setSoundEnabled] = useState(true);
+  // Empty means "pick a fresh random seed"; a number reproduces an earlier run.
+  const [seed, setSeed] = useState("");
+  const [extraLoras, setExtraLoras] = useState<ExtraLoraDraft[]>([]);
+  const [availableLoras, setAvailableLoras] = useState<string[]>([]);
+  const nextLoraId = useRef(1);
   const [firstImageFile, setFirstImageFile] = useState<File | null>(null);
   const [firstImageOriginal, setFirstImageOriginal] = useState<File | null>(null);
   const [firstImageCrop, setFirstImageCrop] = useState<CropRect | null>(null);
@@ -106,7 +114,10 @@ export default function Home() {
       const online = await checkConnection();
       if (!active) return;
       setConnected(online);
-      if (online) void refreshHistory();
+      if (online) {
+        void refreshHistory();
+        void getAvailableLoras().then(setAvailableLoras).catch(() => setAvailableLoras([]));
+      }
     };
     void refresh();
     const timer = window.setInterval(refresh, 5000);
@@ -366,6 +377,8 @@ export default function Home() {
               )
             : prompt.trim(),
           profile, resolution, duration, aspect, sound: soundEnabled, sourceMode,
+          seed: seed.trim() ? Number(seed) : undefined,
+          extraLoras: extraLoras.length ? extraLoras.map(({ name, strength }) => ({ name, strength })) : undefined,
           inputMode: sourceMode === "reference" ? "reference" : "standard",
           sourceWidth: !continuationSource && sourceMode === "image" ? anchorImageDimensions?.width : undefined,
           sourceHeight: !continuationSource && sourceMode === "image" ? anchorImageDimensions?.height : undefined,
@@ -423,6 +436,27 @@ export default function Home() {
     } finally {
       setIsOptimizing(false);
     }
+  }
+
+  function addExtraLora() {
+    const unused = availableLoras.find((name) => !extraLoras.some((item) => item.name === name));
+    if (!unused) return;
+    setExtraLoras((current) => [...current, { id: nextLoraId.current++, name: unused, strength: 0.8 }]);
+  }
+
+  function updateExtraLora(id: number, patch: Partial<ExtraLora>) {
+    setExtraLoras((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  }
+
+  function removeExtraLora(id: number) {
+    setExtraLoras((current) => current.filter((item) => item.id !== id));
+  }
+
+  function reuseSeed(value: number) {
+    setSeed(String(value));
+    setView("create");
+    setNotice(`已套用種子 ${value}，同樣設定下會重現相同的畫面。`);
+    window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
   }
 
   function restorePrompt() {
@@ -524,6 +558,8 @@ export default function Home() {
     setDuration(nextDuration);
     setAspect(video.aspect ?? aspectFromDimensions(video.width, video.height));
     setSoundEnabled(video.sound);
+    setSeed(video.seed === undefined ? "" : String(video.seed));
+    setExtraLoras((video.extraLoras ?? []).map((item) => ({ ...item, id: nextLoraId.current++ })));
     setFirstImageFile(restoredFirst?.file ?? null);
     setFirstImageOriginal(restoredFirst?.file ?? null);
     setFirstImageCrop(null);
@@ -817,6 +853,53 @@ export default function Home() {
                 </small>
               </div>
 
+              {availableLoras.length > 0 && (
+                <div className="lora-stack-section">
+                  <div className="lora-stack-heading">
+                    <div>
+                      <strong>額外 LoRA</strong>
+                      <p>依序疊在 Turbo LoRA 之後。不加就跟以前完全一樣。</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={addExtraLora}
+                      disabled={extraLoras.length >= availableLoras.length}
+                    >＋ 新增 LoRA</button>
+                  </div>
+                  {extraLoras.map((item, index) => (
+                    <div className="lora-row" key={item.id}>
+                      <span className="lora-order">{index + 1}</span>
+                      <select value={item.name} onChange={(event) => updateExtraLora(item.id, { name: event.target.value })}>
+                        {availableLoras.map((name) => (
+                          <option
+                            value={name}
+                            key={name}
+                            disabled={name !== item.name && extraLoras.some((other) => other.name === name)}
+                          >{name.replace(/\.safetensors$/, "")}</option>
+                        ))}
+                      </select>
+                      <label className="lora-strength">
+                        <span>強度</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={2}
+                          step={0.05}
+                          value={item.strength}
+                          onChange={(event) => updateExtraLora(item.id, { strength: Number(event.target.value) })}
+                        />
+                      </label>
+                      <button type="button" onClick={() => removeExtraLora(item.id)}>移除</button>
+                    </div>
+                  ))}
+                  {extraLoras.length > 0 && (
+                    <p className="lora-stack-note">
+                      疊加時所有 LoRA 會改用 merge 模式，否則後面的會蓋掉前面的。畫面會比單一 LoRA 稍軟。
+                    </p>
+                  )}
+                </div>
+              )}
+
               <div className="composer-footer">
                 <div className="controls">
                   <label>
@@ -890,6 +973,17 @@ export default function Home() {
                       <option value="off">關閉 · 無音軌</option>
                     </select>
                   </label>
+                  <label>
+                    <span>種子</span>
+                    <input
+                      className="seed-input"
+                      value={seed}
+                      inputMode="numeric"
+                      onChange={(event) => setSeed(event.target.value.replace(/[^0-9]/g, ""))}
+                      placeholder="留空 = 每次隨機"
+                      aria-label="生成種子"
+                    />
+                  </label>
                 </div>
 
                 <button className="generate-button" onClick={generate} disabled={!connected || isGenerating || isOptimizing}>
@@ -927,7 +1021,7 @@ export default function Home() {
               </div>
             )}
 
-            <RecentSection videos={videos.slice(0, 3)} onViewAll={() => setView("works")} onDelete={removeVideo} onExtend={extendVideo} onRedo={redoVideo} emptyText="第一支影片，從一句話開始" />
+            <RecentSection videos={videos.slice(0, 3)} onViewAll={() => setView("works")} onDelete={removeVideo} onExtend={extendVideo} onRedo={redoVideo} onReuseSeed={reuseSeed} emptyText="第一支影片，從一句話開始" />
           </>
         ) : (
           <section className="works-page">
@@ -935,7 +1029,7 @@ export default function Home() {
               <div><p className="eyebrow">LOCAL CREATIONS</p><h1>我的作品</h1><p>影片都儲存在本機 ComfyUI/output/video。</p></div>
               <button className="secondary-button" onClick={refreshHistory}>↻ 重新整理</button>
             </div>
-            <VideoGrid videos={videos} onDelete={removeVideo} onExtend={extendVideo} onRedo={redoVideo} emptyText="目前還沒有本次工作階段的作品" />
+            <VideoGrid videos={videos} onDelete={removeVideo} onExtend={extendVideo} onRedo={redoVideo} onReuseSeed={reuseSeed} emptyText="目前還沒有本次工作階段的作品" />
           </section>
         )}
       </section>
@@ -1047,21 +1141,22 @@ function readVideoDuration(video: GeneratedVideo) {
 type VideoGridActions = {
   videos: GeneratedVideo[];
   onDelete: (video: GeneratedVideo) => Promise<void>;
+  onReuseSeed: (seed: number) => void;
   onExtend: (video: GeneratedVideo) => void;
   onRedo: (video: GeneratedVideo) => Promise<void>;
   emptyText: string;
 };
 
-function RecentSection({ videos, onViewAll, onDelete, onExtend, onRedo, emptyText }: VideoGridActions & { onViewAll: () => void }) {
+function RecentSection({ videos, onViewAll, onDelete, onExtend, onRedo, onReuseSeed, emptyText }: VideoGridActions & { onViewAll: () => void }) {
   return (
     <section className="recent-section">
       <div className="section-heading"><div><p className="eyebrow">LOCAL CREATIONS</p><h2>最近作品</h2></div><button onClick={onViewAll}>查看全部 →</button></div>
-      <VideoGrid videos={videos} onDelete={onDelete} onExtend={onExtend} onRedo={onRedo} emptyText={emptyText} />
+      <VideoGrid videos={videos} onDelete={onDelete} onExtend={onExtend} onRedo={onRedo} onReuseSeed={onReuseSeed} emptyText={emptyText} />
     </section>
   );
 }
 
-function VideoGrid({ videos, onDelete, onExtend, onRedo, emptyText }: VideoGridActions) {
+function VideoGrid({ videos, onDelete, onExtend, onRedo, onReuseSeed, emptyText }: VideoGridActions) {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [loadingRedo, setLoadingRedo] = useState<string | null>(null);
@@ -1110,6 +1205,17 @@ function VideoGrid({ videos, onDelete, onExtend, onRedo, emptyText }: VideoGridA
               <div className="video-meta">
                 <span title={video.filename}>{video.filename}</span>
                 {video.generationSeconds !== undefined && <small>耗時 {video.generationSeconds} 秒</small>}
+                {video.extraLoras?.length ? (
+                  <small title={video.extraLoras.map((l) => `${l.name} @${l.strength}`).join(", ")}>
+                    LoRA {video.extraLoras.map((l) => `${l.name.replace(/\.safetensors$/, "")} @${l.strength}`).join("、")}
+                  </small>
+                ) : null}
+                {video.seed !== undefined && (
+                  <small className="seed-line">
+                    種子 <code>{video.seed}</code>
+                    <button type="button" onClick={() => onReuseSeed(video.seed!)}>沿用</button>
+                  </small>
+                )}
                 {video.extendable && <small>第 {video.clipIndex ?? 1} 段 · 可延伸</small>}
               </div>
               <div className="card-actions">

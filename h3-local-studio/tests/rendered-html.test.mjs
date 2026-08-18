@@ -283,3 +283,97 @@ test("crops reference and keyframe images without altering the chosen file", asy
   assert.match(styles, /\.crop-actions \{[^}]*position: absolute/);
   assert.match(styles, /\.crop-modal \{[^}]*z-index: 40/);
 });
+
+test("reuses an exact seed and reports the seed of finished videos", async () => {
+  const [{ buildWorkflow, buildReferenceWorkflow }, page, comfy, styles] = await Promise.all([
+    import(new URL("../lib/comfy.ts", import.meta.url)),
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/comfy.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  const base = { prompt: "x", profile: "fast", resolution: "safe", duration: 5, aspect: "16:9", sound: true };
+  assert.equal(buildWorkflow({ ...base, seed: 123456 })["15"].inputs.noise_seed, 123456);
+  assert.equal(
+    buildReferenceWorkflow({ ...base, seed: 987654, inputMode: "reference" }, ["a.png"])["150"].inputs.seed,
+    987654,
+  );
+  // An omitted seed must stay random, or every run would repeat the same video.
+  assert.notEqual(
+    buildWorkflow({ ...base })["15"].inputs.noise_seed,
+    buildWorkflow({ ...base })["15"].inputs.noise_seed,
+  );
+
+  // The seed is fixed once per run so the graph and the saved metadata agree.
+  assert.match(comfy, /seed: options\.seed \?\? randomSeed\(\),\r?\n {4}chainId,/);
+  assert.match(comfy, /const metadata = \{\r?\n {4}seed: runOptions\.seed,/);
+  // Recovered from ComfyUI history for both modes.
+  assert.match(comfy, /seedFromGraph\(graph, "RandomNoise", "noise_seed"\)/);
+  assert.match(comfy, /seedFromGraph\(graph, "MiniMaxH3LatentLabLongMediaSampler", "seed"\)/);
+
+  assert.match(page, /const \[seed, setSeed\] = useState\(""\)/);
+  assert.match(page, /seed: seed\.trim\(\) \? Number\(seed\) : undefined/);
+  assert.match(page, /className="seed-input"/);
+  assert.match(page, /function reuseSeed\(value: number\)/);
+  assert.match(page, /setSeed\(video\.seed === undefined \? "" : String\(video\.seed\)\)/);
+  assert.match(styles, /\.seed-input \{/);
+});
+
+test("stacks any number of extra LoRAs after the Turbo LoRA", async () => {
+  const [{ buildWorkflow, buildReferenceWorkflow }, page, comfy, styles] = await Promise.all([
+    import(new URL("../lib/comfy.ts", import.meta.url)),
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/comfy.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  const base = { prompt: "x", profile: "fast", resolution: "safe", duration: 5, aspect: "16:9", sound: true };
+  const extras = [
+    { name: "A.safetensors", strength: 0.8 },
+    { name: "B.safetensors", strength: 0.4 },
+    { name: "C.safetensors", strength: 1 },
+  ];
+
+  const chainOf = (graph, start) => {
+    const follow = new Set(["MiniMaxH3TurboLoRA", "MiniMaxH3MemoryEfficientSageAttentionPatch"]);
+    const out = [];
+    let current = start;
+    for (;;) {
+      const next = Object.entries(graph).find(([, item]) => follow.has(item.class_type)
+        && Array.isArray(item.inputs.model) && item.inputs.model[0] === current);
+      if (!next) return out;
+      out.push(next[0]);
+      current = next[0];
+    }
+  };
+
+  for (const graph of [
+    buildWorkflow({ ...base, extraLoras: extras }),
+    buildReferenceWorkflow({ ...base, inputMode: "reference", extraLoras: extras }, ["a.png"]),
+  ]) {
+    assert.deepEqual(chainOf(graph, "6"), ["120", "600", "601", "602", "119"]);
+    assert.equal(graph["601"].inputs.lora_name, "B.safetensors");
+    assert.equal(graph["601"].inputs.strength, 0.4);
+    // Bypass keeps its adapters under one shared injection key, so a second
+    // bypass node would overwrite the first. Stacking must merge throughout.
+    for (const id of ["120", "600", "601", "602"]) assert.equal(graph[id].inputs.low_vram, true);
+  }
+
+  // Untouched when the feature is unused: the Turbo LoRA keeps its bypass path.
+  const plain = buildWorkflow({ ...base });
+  assert.deepEqual(chainOf(plain, "6"), ["120", "119"]);
+  assert.equal(plain["120"].inputs.low_vram, false);
+
+  // QUALITY builds no Turbo node, so extras must chain straight off the UNET.
+  const quality = buildWorkflow({ ...base, profile: "quality", extraLoras: [extras[0]] });
+  assert.deepEqual(chainOf(quality, "6"), ["600", "119"]);
+
+  assert.match(comfy, /export async function getAvailableLoras/);
+  assert.match(comfy, /name !== TURBO_LORA/);
+  assert.match(comfy, /function extraLorasFromGraph/);
+  assert.match(page, /className="lora-stack-section"/);
+  assert.match(page, /function addExtraLora/);
+  assert.match(page, /function removeExtraLora/);
+  assert.match(page, /extraLoras: extraLoras\.length \? extraLoras\.map/);
+  assert.match(styles, /\.lora-row \{/);
+});
