@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "react-image-crop/dist/ReactCrop.css";
 
 :root {
   --bg: #090a0f;
@@ -110,6 +111,24 @@ button { color: inherit; }
 .reference-image img { width: 100%; height: 100%; object-fit: contain; position: absolute; inset: 0; }
 .reference-image img + span { position: absolute; right: 8px; bottom: 8px; border-radius: 6px; background: rgba(8,9,13,.88); padding: 6px 8px; font-size: 10px; }
 .reference-image strong { color: #aaa7b4; font-size: 11px; }
+
+.crop-actions { position: absolute; left: 10px; bottom: 10px; display: flex; gap: 6px; }
+.crop-actions button { border: 1px solid #3d3d4b; border-radius: 7px; background: rgba(8,9,13,.86); padding: 7px 10px; font-size: 11px; cursor: pointer; }
+.crop-actions button:hover { border-color: var(--purple); }
+.reference-image .crop-actions { left: 8px; bottom: 8px; gap: 5px; }
+.reference-image .crop-actions button { border-radius: 6px; padding: 6px 8px; font-size: 10px; }
+
+.crop-modal { position: fixed; z-index: 40; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(5,6,10,.82); }
+.crop-modal-panel { display: flex; flex-direction: column; gap: 14px; width: min(920px, 100%); max-height: 90vh; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 20px; }
+.crop-modal-panel h3 { margin: 0 0 4px; font-size: 15px; }
+.crop-modal-panel header p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.crop-modal-canvas { flex: 1; min-height: 0; display: grid; place-items: center; overflow: auto; border: 1px solid var(--line); border-radius: 10px; background: #0b0c11; padding: 10px; }
+.crop-modal-canvas img { max-height: 58vh; max-width: 100%; }
+.crop-modal-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.crop-modal-actions span { margin-right: auto; color: var(--muted); font-size: 11px; }
+.crop-modal-actions button { border: 1px solid #3d3d4b; border-radius: 9px; background: var(--panel-2); padding: 9px 16px; font-size: 12px; cursor: pointer; }
+.crop-modal-actions button.primary { border-color: transparent; background: var(--purple); }
+.crop-modal-actions button:disabled { opacity: .45; cursor: not-allowed; }
 .reference-fields { display: grid; align-content: start; gap: 9px; padding: 13px 15px; }
 .reference-index { display: flex; align-items: center; justify-content: space-between; }
 .reference-index span { color: #a98cff; font-family: Consolas, monospace; font-size: 11px; }

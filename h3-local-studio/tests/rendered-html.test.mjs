@@ -247,3 +247,39 @@ test("highlights only established reference tags in the prompt editor", async ()
   assert.match(styles, /\.prompt-highlight \{[^}]*white-space: pre-wrap/);
   assert.match(styles, /\.prompt-tag-highlight \{[^}]*color: #b69cff/);
 });
+
+test("crops reference and keyframe images without altering the chosen file", async () => {
+  const [page, cropper, styles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/image-cropper.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  // Every crop starts from the file as chosen, so re-cropping never stacks
+  // losses and the original is always recoverable.
+  assert.match(page, /originalFile: File \| null;/);
+  assert.match(page, /crop: CropRect \| null;/);
+  assert.match(page, /originalFile: file, crop: null/);
+  assert.match(page, /setFirstImageOriginal\(file\);/);
+  assert.match(page, /setLastImageOriginal\(file\);/);
+  assert.match(page, /function croppableFile\(target: CropTarget\)/);
+  assert.match(page, /async function restoreOriginalImage/);
+
+  // Keyframes drive the output ratio, so their crop box is locked to it.
+  // Reference images do not, so they crop freely.
+  assert.match(page, /aspect=\{cropTarget\.kind === "reference" \? undefined : CROP_ASPECT\[aspect\]\}/);
+  assert.match(page, /const CROP_ASPECT: Record<GenerationOptions\["aspect"\], number>/);
+
+  // The thumbnail is a <label>, so the crop button must not reopen the picker.
+  assert.match(page, /event\.preventDefault\(\);\s*\n\s*event\.stopPropagation\(\);/);
+
+  assert.match(cropper, /export async function cropImageFile/);
+  assert.match(cropper, /canvas\.toBlob\(resolve, "image\/png"\)/);
+  assert.match(cropper, /height = aspect \? width \/ aspect :/);
+  assert.match(cropper, /Math\.min\(width, size\.width - x\)/);
+  assert.match(cropper, /Math\.min\(height, size\.height - y\)/);
+
+  assert.match(styles, /@import "react-image-crop\/dist\/ReactCrop\.css";/);
+  assert.match(styles, /\.crop-actions \{[^}]*position: absolute/);
+  assert.match(styles, /\.crop-modal \{[^}]*z-index: 40/);
+});

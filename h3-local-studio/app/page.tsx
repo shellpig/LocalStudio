@@ -16,6 +16,7 @@ import {
   ReferenceImageInput,
   resolveOutputDimensions,
 } from "@/lib/comfy";
+import { CropRect, cropImageFile, ImageCropper, readImageDimensions } from "./image-cropper";
 
 type View = "create" | "works";
 type SourceMode = "text" | "image" | "reference";
@@ -23,18 +24,24 @@ type ImageDimensions = { width: number; height: number };
 type ReferenceImageDraft = {
   id: number;
   file: File | null;
+  /** The image as chosen, before any crop. Kept so the crop can be redone. */
+  originalFile: File | null;
+  crop: CropRect | null;
   preview: string | null;
   dimensions: ImageDimensions | null;
   label: string;
   description: string;
 };
+type CropTarget = { kind: "first" } | { kind: "last" } | { kind: "reference"; id: number };
+
+const CROP_ASPECT: Record<GenerationOptions["aspect"], number> = { "16:9": 16 / 9, "9:16": 9 / 16, "1:1": 1 };
 
 const EXAMPLE_PROMPT =
   "電影感寫實風格，雨後黃昏的台北街道，一位穿深色風衣的人緩慢走過霓虹燈下，鏡頭低角度向前跟拍，水面倒影細緻，微風吹動衣角。環境音：細雨、遠方車流、輕柔低沉的配樂。不要文字、字幕、Logo 或浮水印。";
 const DURATION_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 
 function emptyReferenceImage(id: number): ReferenceImageDraft {
-  return { id, file: null, preview: null, dimensions: null, label: "", description: "" };
+  return { id, file: null, originalFile: null, crop: null, preview: null, dimensions: null, label: "", description: "" };
 }
 
 export default function Home() {
@@ -48,12 +55,17 @@ export default function Home() {
   const [aspect, setAspect] = useState<GenerationOptions["aspect"]>("16:9");
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [firstImageFile, setFirstImageFile] = useState<File | null>(null);
+  const [firstImageOriginal, setFirstImageOriginal] = useState<File | null>(null);
+  const [firstImageCrop, setFirstImageCrop] = useState<CropRect | null>(null);
   const [firstImagePreview, setFirstImagePreview] = useState<string | null>(null);
   const [firstImageDimensions, setFirstImageDimensions] = useState<ImageDimensions | null>(null);
   const [lastImageFile, setLastImageFile] = useState<File | null>(null);
+  const [lastImageOriginal, setLastImageOriginal] = useState<File | null>(null);
+  const [lastImageCrop, setLastImageCrop] = useState<CropRect | null>(null);
   const [lastImagePreview, setLastImagePreview] = useState<string | null>(null);
   const [lastImageDimensions, setLastImageDimensions] = useState<ImageDimensions | null>(null);
   const [referenceImages, setReferenceImages] = useState<ReferenceImageDraft[]>([emptyReferenceImage(1)]);
+  const [cropTarget, setCropTarget] = useState<CropTarget | null>(null);
   const nextReferenceId = useRef(2);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isOptimizing, setIsOptimizing] = useState(false);
@@ -157,10 +169,14 @@ export default function Home() {
     if (previousPreview) URL.revokeObjectURL(previousPreview);
     if (position === "first") {
       setFirstImageFile(file);
+      setFirstImageOriginal(file);
+      setFirstImageCrop(null);
       setFirstImagePreview(file ? URL.createObjectURL(file) : null);
       setFirstImageDimensions(null);
     } else {
       setLastImageFile(file);
+      setLastImageOriginal(file);
+      setLastImageCrop(null);
       setLastImagePreview(file ? URL.createObjectURL(file) : null);
       setLastImageDimensions(null);
     }
@@ -182,7 +198,7 @@ export default function Home() {
     if (current?.preview) URL.revokeObjectURL(current.preview);
     setReferenceImages((references) => references.map((reference) =>
       reference.id === id
-        ? { ...reference, file, preview: file ? URL.createObjectURL(file) : null, dimensions: null }
+        ? { ...reference, file, originalFile: file, crop: null, preview: file ? URL.createObjectURL(file) : null, dimensions: null }
         : reference,
     ));
     setPromptBeforeOptimization(null);
@@ -197,6 +213,57 @@ export default function Home() {
       ));
     } catch {
       setError("無法讀取參考圖片尺寸，請改用 JPG、PNG 或 WebP。 ");
+    }
+  }
+
+  function croppableFile(target: CropTarget) {
+    if (target.kind === "reference") return referenceImages.find((reference) => reference.id === target.id)?.originalFile ?? null;
+    return target.kind === "first" ? firstImageOriginal : lastImageOriginal;
+  }
+
+  function applyImage(target: CropTarget, file: File, dimensions: ImageDimensions, crop: CropRect | null) {
+    const preview = URL.createObjectURL(file);
+    if (target.kind === "reference") {
+      setReferenceImages((references) => references.map((reference) => {
+        if (reference.id !== target.id) return reference;
+        if (reference.preview) URL.revokeObjectURL(reference.preview);
+        return { ...reference, file, crop, preview, dimensions };
+      }));
+      return;
+    }
+    if (target.kind === "first") {
+      setFirstImageFile(file);
+      setFirstImageCrop(crop);
+      setFirstImagePreview(preview);
+      setFirstImageDimensions(dimensions);
+    } else {
+      setLastImageFile(file);
+      setLastImageCrop(crop);
+      setLastImagePreview(preview);
+      setLastImageDimensions(dimensions);
+    }
+  }
+
+  async function applyCrop(rect: CropRect) {
+    const target = cropTarget;
+    const original = target ? croppableFile(target) : null;
+    setCropTarget(null);
+    if (!target || !original) return;
+    try {
+      const cropped = await cropImageFile(original, rect);
+      applyImage(target, cropped, await readImageDimensions(cropped), rect);
+    } catch {
+      setError("無法裁切這張圖片，請改用 JPG、PNG 或 WebP。 ");
+    }
+  }
+
+  async function restoreOriginalImage(target: CropTarget) {
+    const original = croppableFile(target);
+    if (!original) return;
+    try {
+      applyImage(target, original, await readImageDimensions(original), null);
+    } catch {
+      setError("無法還原原圖，請重新選擇圖片。 ");
     }
   }
 
@@ -434,6 +501,10 @@ export default function Home() {
           return {
             id: index + 1,
             file: restored?.file ?? null,
+            // A restored image is whatever was uploaded last time, crop included.
+            // It becomes the new starting point for further cropping.
+            originalFile: restored?.file ?? null,
+            crop: null,
             preview: restored?.preview ?? null,
             dimensions: restored?.dimensions ?? null,
             label: definition?.label ?? `參考${index + 1}`,
@@ -454,9 +525,13 @@ export default function Home() {
     setAspect(video.aspect ?? aspectFromDimensions(video.width, video.height));
     setSoundEnabled(video.sound);
     setFirstImageFile(restoredFirst?.file ?? null);
+    setFirstImageOriginal(restoredFirst?.file ?? null);
+    setFirstImageCrop(null);
     setFirstImagePreview(restoredFirst?.preview ?? null);
     setFirstImageDimensions(restoredFirst?.dimensions ?? null);
     setLastImageFile(restoredLast?.file ?? null);
+    setLastImageOriginal(restoredLast?.file ?? null);
+    setLastImageCrop(null);
     setLastImagePreview(restoredLast?.preview ?? null);
     setLastImageDimensions(restoredLast?.dimensions ?? null);
     setReferenceImages(nextReferences);
@@ -504,6 +579,11 @@ export default function Home() {
     { id: "create", icon: "✦", label: "創作" },
     { id: "works", icon: "▦", label: "作品" },
   ];
+
+  const cropFile = cropTarget ? croppableFile(cropTarget) : null;
+  const cropReferenceIndex = cropTarget?.kind === "reference"
+    ? referenceImages.findIndex((reference) => reference.id === cropTarget.id) + 1
+    : 0;
 
   return (
     <main className="studio-shell">
@@ -575,6 +655,11 @@ export default function Home() {
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img src={firstImagePreview} alt="首幀預覽" />
                           <span>更換首幀圖片</span>
+                          <CropActions
+                            hasCrop={Boolean(firstImageCrop)}
+                            onCrop={() => setCropTarget({ kind: "first" })}
+                            onRestore={() => void restoreOriginalImage({ kind: "first" })}
+                          />
                         </>
                       ) : (
                         <>
@@ -591,6 +676,11 @@ export default function Home() {
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img src={lastImagePreview} alt="尾幀預覽" />
                           <span>更換尾幀圖片</span>
+                          <CropActions
+                            hasCrop={Boolean(lastImageCrop)}
+                            onCrop={() => setCropTarget({ kind: "last" })}
+                            onRestore={() => void restoreOriginalImage({ kind: "last" })}
+                          />
                         </>
                       ) : (
                         <>
@@ -628,6 +718,11 @@ export default function Home() {
                               {/* eslint-disable-next-line @next/next/no-img-element */}
                               <img src={reference.preview} alt={`參考圖片 ${index + 1}`} />
                               <span>更換圖片</span>
+                              <CropActions
+                                hasCrop={Boolean(reference.crop)}
+                                onCrop={() => setCropTarget({ kind: "reference", id: reference.id })}
+                                onRestore={() => void restoreOriginalImage({ kind: "reference", id: reference.id })}
+                              />
                             </>
                           ) : (
                             <><span className="upload-icon">＋</span><strong>選擇參考圖 {index + 1}</strong></>
@@ -844,7 +939,41 @@ export default function Home() {
           </section>
         )}
       </section>
+
+      {cropTarget && cropFile && (
+        <ImageCropper
+          file={cropFile}
+          title={cropTarget.kind === "reference"
+            ? `裁切參考圖 ${cropReferenceIndex}`
+            : cropTarget.kind === "first" ? "裁切首幀圖片" : "裁切尾幀圖片"}
+          hint={cropTarget.kind === "reference"
+            ? "只留下要參考的部分，例如臉部。參考圖會被縮到與輸出畫面相同的像素量，所以裁得越準，臉的細節就越多。裁切比例不影響輸出畫面。"
+            : `裁切框鎖定 ${aspect}，因為首尾圖的比例決定輸出影片的畫面比例。`}
+          aspect={cropTarget.kind === "reference" ? undefined : CROP_ASPECT[aspect]}
+          onCancel={() => setCropTarget(null)}
+          onApply={(rect) => void applyCrop(rect)}
+        />
+      )}
     </main>
+  );
+}
+
+function CropActions({ hasCrop, onCrop, onRestore }: { hasCrop: boolean; onCrop: () => void; onRestore: () => void }) {
+  // The thumbnail is a <label> for the file input, so a plain click here would
+  // also reopen the file picker.
+  function intercept(action: () => void) {
+    return (event: React.MouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      action();
+    };
+  }
+
+  return (
+    <span className="crop-actions">
+      <button type="button" onClick={intercept(onCrop)}>{hasCrop ? "重新裁切" : "裁切"}</button>
+      {hasCrop && <button type="button" onClick={intercept(onRestore)}>還原原圖</button>}
+    </span>
   );
 }
 
