@@ -130,6 +130,28 @@ def validated_metadata(data):
         metadata["duration"] = data["duration"]
     if data.get("aspect") in {"16:9", "9:16", "1:1"}:
         metadata["aspect"] = data["aspect"]
+    seed = data.get("seed")
+    if isinstance(seed, int) and not isinstance(seed, bool) and 0 <= seed <= 9007199254740991:
+        metadata["seed"] = seed
+
+    extra_loras = data.get("extraLoras")
+    if isinstance(extra_loras, list) and 1 <= len(extra_loras) <= 20:
+        normalized_loras = []
+        for item in extra_loras:
+            if not isinstance(item, dict):
+                raise ValueError("Extra LoRA entries must be objects")
+            name = item.get("name")
+            strength = item.get("strength")
+            # The name is offered back to the UI for a re-run, so keep it a bare
+            # filename inside the loras folder.
+            if not isinstance(name, str) or not name.endswith(".safetensors") or len(name) > 200:
+                raise ValueError("Extra LoRA name must be a .safetensors filename")
+            if Path(name).name != name or ".." in name:
+                raise ValueError("Extra LoRA name must not contain a path")
+            if isinstance(strength, bool) or not isinstance(strength, (int, float)) or not -10 <= strength <= 10:
+                raise ValueError("Extra LoRA strength out of range")
+            normalized_loras.append({"name": name, "strength": float(strength)})
+        metadata["extraLoras"] = normalized_loras
     if data.get("sourceMode") in {"text", "image", "reference"}:
         metadata["sourceMode"] = data["sourceMode"]
     if data.get("inputMode") in {"standard", "reference"}:

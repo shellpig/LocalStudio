@@ -285,11 +285,12 @@ test("crops reference and keyframe images without altering the chosen file", asy
 });
 
 test("reuses an exact seed and reports the seed of finished videos", async () => {
-  const [{ buildWorkflow, buildReferenceWorkflow }, page, comfy, styles] = await Promise.all([
+  const [{ buildWorkflow, buildReferenceWorkflow }, page, comfy, styles, api] = await Promise.all([
     import(new URL("../lib/comfy.ts", import.meta.url)),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/comfy.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../../integrations/ComfyUI-H3-Studio/h3_studio_api.py", import.meta.url), "utf8"),
   ]);
 
   const base = { prompt: "x", profile: "fast", resolution: "safe", duration: 5, aspect: "16:9", sound: true };
@@ -317,6 +318,8 @@ test("reuses an exact seed and reports the seed of finished videos", async () =>
   assert.match(page, /function reuseSeed\(value: number\)/);
   assert.match(page, /setSeed\(video\.seed === undefined \? "" : String\(video\.seed\)\)/);
   assert.match(styles, /\.seed-input \{/);
+  // ComfyUI history is capped, so the sidecar must keep the seed as well.
+  assert.match(api, /metadata\["seed"\] = seed/);
 });
 
 test("stacks any number of extra LoRAs after the Turbo LoRA", async () => {
@@ -326,6 +329,7 @@ test("stacks any number of extra LoRAs after the Turbo LoRA", async () => {
     readFile(new URL("../lib/comfy.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
+  const api = await readFile(new URL("../../integrations/ComfyUI-H3-Studio/h3_studio_api.py", import.meta.url), "utf8");
 
   const base = { prompt: "x", profile: "fast", resolution: "safe", duration: 5, aspect: "16:9", sound: true };
   const extras = [
@@ -376,4 +380,7 @@ test("stacks any number of extra LoRAs after the Turbo LoRA", async () => {
   assert.match(page, /function removeExtraLora/);
   assert.match(page, /extraLoras: extraLoras\.length \? extraLoras\.map/);
   assert.match(styles, /\.lora-row \{/);
+  assert.match(api, /metadata\["extraLoras"\] = normalized_loras/);
+  // The stored name is offered back for a re-run, so it stays a bare filename.
+  assert.match(api, /Extra LoRA name must not contain a path/);
 });
