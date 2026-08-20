@@ -353,7 +353,12 @@ export async function checkConnection() {
 
 async function uploadImage(file: File) {
   const data = new FormData();
-  data.append("image", file, `${crypto.randomUUID()}-${file.name}`);
+  // The name is built from scratch rather than prefixed onto file.name. A file
+  // restored from a previous upload already carries that upload's prefix, so
+  // prefixing again grew the name by 42 characters per round trip until it
+  // passed the filesystem's 255-character limit and the upload failed.
+  const extension = /\.(?:jpe?g|png|webp)$/i.exec(file.name)?.[0].toLowerCase() ?? ".png";
+  data.append("image", file, `${crypto.randomUUID()}${extension}`);
   data.append("type", "input");
   data.append("overwrite", "true");
   const response = await request("/upload/image", { method: "POST", body: data });

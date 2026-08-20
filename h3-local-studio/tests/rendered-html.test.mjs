@@ -284,6 +284,17 @@ test("crops reference and keyframe images without altering the chosen file", asy
   assert.match(styles, /\.crop-modal \{[^}]*z-index: 40/);
 });
 
+test("uploads an image under a fresh name so the name cannot outgrow the filesystem", async () => {
+  const comfy = await readFile(new URL("../lib/comfy.ts", import.meta.url), "utf8");
+
+  // A file restored from an earlier upload already carries that upload's name,
+  // so prefixing onto it added 37 characters every round trip until the name
+  // passed 255 characters and the upload failed.
+  assert.match(comfy, /const extension = \/\\\.\(\?:jpe\?g\|png\|webp\)\$\/i\.exec\(file\.name\)/);
+  assert.match(comfy, /data\.append\("image", file, `\$\{crypto\.randomUUID\(\)\}\$\{extension\}`\)/);
+  assert.doesNotMatch(comfy, /randomUUID\(\)\}-\$\{file\.name\}/);
+});
+
 test("reuses an exact seed and reports the seed of finished videos", async () => {
   const [{ buildWorkflow, buildReferenceWorkflow }, page, comfy, styles, api] = await Promise.all([
     import(new URL("../lib/comfy.ts", import.meta.url)),
