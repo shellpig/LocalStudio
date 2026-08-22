@@ -989,6 +989,7 @@ export default function Home() {
                     <select value={resolution} onChange={(event) => setResolution(event.target.value as GenerationOptions["resolution"])} disabled={Boolean(continuationSource) || profile === "safe-long"}>
                       {sourceMode === "reference" ? (
                         <>
+                          <option value="p480">{sizeLabels.p480} · 480P</option>
                           <option value="p540">{sizeLabels.p540} · 540P</option>
                           <option value="native">{sizeLabels.native} · 原生 H3</option>
                         </>
