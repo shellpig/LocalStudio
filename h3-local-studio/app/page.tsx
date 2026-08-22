@@ -4,6 +4,7 @@ import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "
 import {
   buildReferencePrompt,
   checkConnection,
+  createImage,
   createVideo,
   deleteVideo,
   GeneratedVideo,
@@ -49,6 +50,7 @@ function emptyReferenceImage(id: number): ReferenceImageDraft {
 
 export default function Home() {
   const [view, setView] = useState<View>("create");
+  const [worksTab, setWorksTab] = useState<"video" | "image">("video");
   const [sourceMode, setSourceMode] = useState<SourceMode>("text");
   const [connected, setConnected] = useState(false);
   const [prompt, setPrompt] = useState("");
@@ -164,6 +166,8 @@ export default function Home() {
   }, [anchorImageDimensions, aspect, continuationSource, sourceMode]);
 
   const outputSize = sizeLabels[resolution];
+  const videoWorks = useMemo(() => videos.filter((item) => item.kind !== "image"), [videos]);
+  const imageWorks = useMemo(() => videos.filter((item) => item.kind === "image"), [videos]);
   const imageAspect = anchorImageDimensions ? formatAspect(anchorImageDimensions.width, anchorImageDimensions.height) : null;
   const extremeImageRatio = anchorImageDimensions
     ? Math.max(anchorImageDimensions.width / anchorImageDimensions.height, anchorImageDimensions.height / anchorImageDimensions.width) > 2.4
@@ -394,6 +398,45 @@ export default function Home() {
       setVideos((current) => [result, ...current.filter((item) => item.filename !== result.filename)]);
       setStatusText(continuationSource ? "延伸影片已完成並無縫接到原片尾端。 " : "影片已完成並儲存到 ComfyUI output/video。 ");
       setContinuationSource(null);
+      setView("works");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "生成失敗，請查看 ComfyUI 視窗。 ");
+    } finally {
+      setIsGenerating(false);
+      void refreshHistory();
+    }
+  }
+
+  async function generateImage() {
+    if (!prompt.trim()) {
+      setError("請先描述想生成的圖片。 ");
+      return;
+    }
+    const references = sourceMode === "reference" ? referenceInputs() : [];
+    if (references === null) return;
+
+    setError("");
+    setNotice("");
+    setElapsed(0);
+    setStatusText("正在送入本機 H3 佇列…");
+    setIsGenerating(true);
+    try {
+      const result = await createImage(
+        {
+          prompt: sourceMode === "reference" && optimizedPromptMode !== "Ref2VA"
+            ? buildReferencePrompt(prompt, references)
+            : prompt.trim(),
+          profile, resolution, duration, aspect, sound: false, sourceMode,
+          seed: seed.trim() ? Number(seed) : undefined,
+          extraLoras: extraLoras.length ? extraLoras.map(({ name, strength }) => ({ name, strength })) : undefined,
+          inputMode: sourceMode === "reference" ? "reference" : "standard",
+        },
+        (phase) => setStatusText(phase),
+        references,
+      );
+      setVideos((current) => [result, ...current.filter((item) => item.filename !== result.filename)]);
+      setStatusText("圖片已完成並儲存到 ComfyUI output/H3_Image。 ");
+      setWorksTab("image");
       setView("works");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "生成失敗，請查看 ComfyUI 視窗。 ");
@@ -986,9 +1029,16 @@ export default function Home() {
                   </label>
                 </div>
 
-                <button className="generate-button" onClick={generate} disabled={!connected || isGenerating || isOptimizing}>
-                  <span>✦</span>{isGenerating ? "生成中" : "生成影片"}
-                </button>
+                <div className="generate-actions">
+                  {sourceMode !== "image" && (
+                    <button className="generate-button image" onClick={generateImage} disabled={!connected || isGenerating || isOptimizing}>
+                      <span>✦</span>{isGenerating ? "生成中" : "生成圖片"}
+                    </button>
+                  )}
+                  <button className="generate-button" onClick={generate} disabled={!connected || isGenerating || isOptimizing}>
+                    <span>✦</span>{isGenerating ? "生成中" : "生成影片"}
+                  </button>
+                </div>
               </div>
 
               <div className="setting-note">
@@ -1006,6 +1056,7 @@ export default function Home() {
                 {profile === "low-vram" && <span> · Turbo LoRA 改用 merge 模式，省下採樣時最大的一筆顯存配置；長片較不易爆顯存，畫面略柔</span>}
                 {resolution !== "safe" && <span> · 較高解析度的顯存與時間需求較高</span>}
                 {extremeImageRatio && <span> · 極端圖片比例可能降低生成品質</span>}
+                {sourceMode !== "image" && <span> · 「生成圖片」忽略秒數與聲音，輸出 2K PNG（{aspect === "16:9" ? "2048×1152" : aspect === "9:16" ? "1152×2048" : "1440×1440"}）</span>}
               </div>
             </section>
 
@@ -1021,15 +1072,24 @@ export default function Home() {
               </div>
             )}
 
-            <RecentSection videos={videos.slice(0, 3)} onViewAll={() => setView("works")} onDelete={removeVideo} onExtend={extendVideo} onRedo={redoVideo} onReuseSeed={reuseSeed} emptyText="第一支影片，從一句話開始" />
+            <RecentSection videos={videoWorks.slice(0, 3)} onViewAll={() => setView("works")} onDelete={removeVideo} onExtend={extendVideo} onRedo={redoVideo} onReuseSeed={reuseSeed} emptyText="第一支影片，從一句話開始" />
           </>
         ) : (
           <section className="works-page">
             <div className="works-heading">
-              <div><p className="eyebrow">LOCAL CREATIONS</p><h1>我的作品</h1><p>影片都儲存在本機 ComfyUI/output/video。</p></div>
+              <div>
+                <p className="eyebrow">LOCAL CREATIONS</p><h1>我的作品</h1>
+                <p>{worksTab === "image" ? "圖片儲存在本機 ComfyUI/output/H3_Image。" : "影片都儲存在本機 ComfyUI/output/video。"}</p>
+              </div>
               <button className="secondary-button" onClick={refreshHistory}>↻ 重新整理</button>
             </div>
-            <VideoGrid videos={videos} onDelete={removeVideo} onExtend={extendVideo} onRedo={redoVideo} onReuseSeed={reuseSeed} emptyText="目前還沒有本次工作階段的作品" />
+            <div className="works-tabs" role="tablist">
+              <button role="tab" aria-selected={worksTab === "video"} className={worksTab === "video" ? "active" : ""} onClick={() => setWorksTab("video")}>影片（{videoWorks.length}）</button>
+              <button role="tab" aria-selected={worksTab === "image"} className={worksTab === "image" ? "active" : ""} onClick={() => setWorksTab("image")}>圖片（{imageWorks.length}）</button>
+            </div>
+            {worksTab === "image"
+              ? <ImageGrid videos={imageWorks} onDelete={removeVideo} onReuseSeed={reuseSeed} emptyText="目前還沒有本次工作階段的圖片" />
+              : <VideoGrid videos={videoWorks} onDelete={removeVideo} onExtend={extendVideo} onRedo={redoVideo} onReuseSeed={reuseSeed} emptyText="目前還沒有本次工作階段的作品" />}
           </section>
         )}
       </section>
@@ -1235,6 +1295,67 @@ function VideoGrid({ videos, onDelete, onExtend, onRedo, onReuseSeed, emptyText 
                     </div>
                   )}
                 </div>
+              </div>
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+type ImageGridActions = {
+  videos: GeneratedVideo[];
+  onDelete: (video: GeneratedVideo) => Promise<void>;
+  onReuseSeed: (seed: number) => void;
+  emptyText: string;
+};
+
+function ImageGrid({ videos, onDelete, onReuseSeed, emptyText }: ImageGridActions) {
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  async function confirmDelete(image: GeneratedVideo) {
+    const key = `${image.subfolder}/${image.filename}`;
+    if (!window.confirm(`確定要刪除「${image.filename}」嗎？\n圖片會移到 Windows 資源回收筒。`)) return;
+    setDeleting(key);
+    try {
+      await onDelete(image);
+    } catch (caught) {
+      window.alert(caught instanceof Error ? caught.message : "刪除失敗，請稍後再試。 ");
+    } finally {
+      setDeleting(null);
+    }
+  }
+
+  if (videos.length === 0) {
+    return <div className="empty-state"><span>✦</span><strong>{emptyText}</strong><p>完成生成後，圖片會自動出現在這裡。</p></div>;
+  }
+  return (
+    <div className="video-grid">
+      {videos.map((image) => {
+        const src = outputUrl(image);
+        const key = `${image.subfolder}/${image.filename}`;
+        return (
+          <article className="video-card" key={key}>
+            {/* Local ComfyUI output served from localhost; next/image optimization is unnecessary. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <a href={src} target="_blank" rel="noreferrer"><img src={src} alt={image.prompt ?? image.filename} loading="lazy" /></a>
+            <div>
+              <div className="video-meta">
+                <span title={image.filename}>{image.filename}</span>
+                {image.generationSeconds !== undefined && <small>耗時 {image.generationSeconds} 秒</small>}
+                {image.width && image.height ? <small>{image.width} × {image.height}</small> : null}
+                {image.seed !== undefined && (
+                  <small className="seed-line">
+                    種子 <code>{image.seed}</code>
+                    <button type="button" onClick={() => onReuseSeed(image.seed!)}>沿用</button>
+                  </small>
+                )}
+              </div>
+              <div className="card-actions">
+                <a href={src} target="_blank" rel="noreferrer">開啟 ↗</a>
+                <a className="img-action" href={src} download={image.filename}>下載</a>
+                <button className="img-action delete" onClick={() => void confirmDelete(image)} disabled={deleting === key}>刪除</button>
               </div>
             </div>
           </article>

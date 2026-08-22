@@ -1,0 +1,90 @@
+{
+  "6": {
+    "class_type": "UNETLoader",
+    "inputs": { "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors", "weight_dtype": "default" },
+    "_meta": { "title": "H3 模型 (fl2va)" }
+  },
+  "13": {
+    "class_type": "CLIPLoader",
+    "inputs": { "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", "type": "minimax", "device": "default" },
+    "_meta": { "title": "文字編碼器" }
+  },
+  "11": {
+    "class_type": "VAELoader",
+    "inputs": { "vae_name": "minimax_h3_video_vae_int8_convrot.safetensors" },
+    "_meta": { "title": "影片 VAE" }
+  },
+  "104": {
+    "class_type": "MiniMaxH3ImageToVideo",
+    "inputs": {
+      "clip": ["13", 0],
+      "vae": ["11", 0],
+      "prompt": "a highly detailed cinematic portrait of a fox in an autumn forest, soft golden light, sharp focus, 8k",
+      "width": 2048,
+      "height": 1152,
+      "length": 5
+    },
+    "_meta": { "title": "H3 文字轉幀 (length=5, 2K)" }
+  },
+  "120": {
+    "class_type": "MiniMaxH3TurboLoRA",
+    "inputs": { "model": ["6", 0], "lora_name": "minimax_h3_turbo_v4_step600_ema.safetensors", "strength": 1, "low_vram": false },
+    "_meta": { "title": "H3 Turbo LoRA" }
+  },
+  "119": {
+    "class_type": "MiniMaxH3MemoryEfficientSageAttentionPatch",
+    "inputs": { "model": ["120", 0] },
+    "_meta": { "title": "SageAttention 省顯存" }
+  },
+  "9": {
+    "class_type": "BasicScheduler",
+    "inputs": { "model": ["6", 0], "scheduler": "simple", "steps": 8, "denoise": 1 },
+    "_meta": { "title": "Turbo 8 步排程" }
+  },
+  "16": {
+    "class_type": "BasicGuider",
+    "inputs": { "model": ["119", 0], "conditioning": ["104", 0] },
+    "_meta": { "title": "引導" }
+  },
+  "15": {
+    "class_type": "RandomNoise",
+    "inputs": { "noise_seed": 42 },
+    "_meta": { "title": "種子" }
+  },
+  "121": {
+    "class_type": "MiniMaxH3TurboSampler",
+    "inputs": {},
+    "_meta": { "title": "H3 Turbo 採樣器" }
+  },
+  "122": {
+    "class_type": "H3CooledTurboSampler",
+    "inputs": { "sampler": ["121", 0] },
+    "_meta": { "title": "每步休息 12 秒 (必要散熱)" }
+  },
+  "14": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": ["15", 0],
+      "guider": ["16", 0],
+      "sampler": ["122", 0],
+      "sigmas": ["9", 0],
+      "latent_image": ["104", 1]
+    },
+    "_meta": { "title": "H3 採樣" }
+  },
+  "10": {
+    "class_type": "VAEDecode",
+    "inputs": { "samples": ["14", 0], "vae": ["11", 0] },
+    "_meta": { "title": "解碼影像" }
+  },
+  "200": {
+    "class_type": "ImageFromBatch",
+    "inputs": { "image": ["10", 0], "batch_index": 2, "length": 1 },
+    "_meta": { "title": "取中間一幀" }
+  },
+  "201": {
+    "class_type": "SaveImage",
+    "inputs": { "images": ["200", 0], "filename_prefix": "H3_Image/H3_Studio_IMG" },
+    "_meta": { "title": "儲存 PNG" }
+  }
+}

@@ -53,10 +53,13 @@ def recycle_file(path):
         raise OSError(result, "Could not move output to the Recycle Bin")
 
 
-def resolve_output_video(filename, subfolder=""):
+def resolve_output_video(filename, subfolder="", allow_images=False):
     if not isinstance(filename, str) or not isinstance(subfolder, str):
         raise ValueError("Invalid output path")
-    if os.path.basename(filename) != filename or Path(filename).suffix.lower() not in {".mp4", ".webm", ".mov"}:
+    allowed = {".mp4", ".webm", ".mov"}
+    if allow_images:
+        allowed = allowed | {".png", ".jpg", ".jpeg", ".webp"}
+    if os.path.basename(filename) != filename or Path(filename).suffix.lower() not in allowed:
         raise ValueError("Only output videos are allowed")
     output_root = Path(folder_paths.get_output_directory()).resolve()
     target = (output_root / subfolder / filename).resolve()
@@ -642,16 +645,26 @@ async def optimize_h3_prompt(request):
 
 @PromptServer.instance.routes.get("/h3-studio/outputs")
 async def list_h3_outputs(_request):
-    video_folder = Path(folder_paths.get_output_directory()).resolve() / "video"
+    output_root = Path(folder_paths.get_output_directory()).resolve()
     outputs = []
+    video_folder = output_root / "video"
     if video_folder.is_dir():
         for target in video_folder.iterdir():
             if not target.is_file() or not target.name.startswith("H3_Studio_") or target.suffix.lower() not in {".mp4", ".webm", ".mov"}:
                 continue
-            item = {"filename": target.name, "subfolder": "video", "type": "output", "modifiedAt": target.stat().st_mtime}
+            item = {"filename": target.name, "subfolder": "video", "type": "output", "kind": "video", "modifiedAt": target.stat().st_mtime}
             metadata = load_metadata(target)
             item.update(metadata)
             item["extendable"] = output_is_extendable(metadata)
+            outputs.append(item)
+    image_folder = output_root / "H3_Image"
+    if image_folder.is_dir():
+        for target in image_folder.iterdir():
+            if not target.is_file() or not target.name.startswith("H3_Studio_") or target.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
+                continue
+            item = {"filename": target.name, "subfolder": "H3_Image", "type": "output", "kind": "image", "modifiedAt": target.stat().st_mtime}
+            item.update(load_metadata(target))
+            item["extendable"] = False
             outputs.append(item)
     outputs.sort(key=lambda item: item["modifiedAt"], reverse=True)
     return web.json_response({"outputs": outputs})
@@ -661,7 +674,7 @@ async def list_h3_outputs(_request):
 async def save_h3_output_metadata(request):
     data = await request.json()
     try:
-        target = resolve_output_video(data.get("filename"), data.get("subfolder", ""))
+        target = resolve_output_video(data.get("filename"), data.get("subfolder", ""), allow_images=True)
     except ValueError as error:
         return web.json_response({"error": str(error)}, status=400)
     except PermissionError as error:
@@ -883,7 +896,7 @@ async def upscale_h3_output(request):
 async def delete_h3_output(request):
     data = await request.json()
     try:
-        target = resolve_output_video(data.get("filename"), data.get("subfolder", ""))
+        target = resolve_output_video(data.get("filename"), data.get("subfolder", ""), allow_images=True)
     except ValueError as error:
         return web.json_response({"error": str(error)}, status=400)
     except PermissionError as error:

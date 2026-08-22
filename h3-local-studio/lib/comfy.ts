@@ -9,6 +9,8 @@ export type GenerationOptions = {
   resolution: "safe" | "clear" | "p480" | "p540" | "native";
   sourceMode?: "text" | "image" | "reference";
   inputMode?: "standard" | "reference";
+  /** "video" (default) runs the normal pipeline; "image" renders a single 2K frame. */
+  outputKind?: "video" | "image";
   duration: number;
   aspect: "16:9" | "9:16" | "1:1";
   /** Reuse an exact seed. Omitted means a fresh random one. */
@@ -30,6 +32,8 @@ export type GeneratedVideo = {
   filename: string;
   subfolder: string;
   type: string;
+  /** "image" marks a still rendered by the image pipeline; absent/"video" otherwise. */
+  kind?: "video" | "image";
   generationSeconds?: number;
   seed?: number;
   extraLoras?: ExtraLora[];
@@ -96,6 +100,17 @@ const SAFE_LONG_DIMENSIONS = {
   "9:16": [352, 640],
   "1:1": [480, 480],
 } as const;
+
+/** Fixed 2K canvases for the image pipeline (each axis a multiple of 32). */
+const IMAGE_DIMENSIONS = {
+  "16:9": [2048, 1152],
+  "9:16": [1152, 2048],
+  "1:1": [1440, 1440],
+} as const;
+
+export function resolveImageDimensions(aspect: GenerationOptions["aspect"]): [number, number] {
+  return [...IMAGE_DIMENSIONS[aspect]];
+}
 
 function dimensionsForSource(sourceWidth: number, sourceHeight: number, targetPixels: number): [number, number] {
   const sourceRatio = sourceWidth / sourceHeight;
@@ -327,6 +342,56 @@ export function buildReferenceWorkflow(options: GenerationOptions, uploadedRefer
   return graph;
 }
 
+/**
+ * Single-frame image pipeline. Renders the shortest legal H3 clip (length 5,
+ * 2 temporal latent slots) at a 2K canvas, then keeps one frame as a PNG.
+ * Text mode uses the fl2va model; reference mode uses the ref2va model so the
+ * <Picture i> subjects are honoured. Always Turbo 8-step with the mandatory
+ * per-step cooldown.
+ */
+export function buildImageWorkflow(options: GenerationOptions, uploadedReferenceImages: string[] = []): PromptGraph {
+  const [width, height] = resolveImageDimensions(options.aspect);
+  const reference = options.inputMode === "reference";
+  const graph: PromptGraph = {
+    "6": node("UNETLoader", {
+      unet_name: reference ? "minimax_h3_ref2va_pruned_w4a8_mixed.safetensors" : "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      weight_dtype: "default",
+    }, reference ? "H3 Ref2VA 模型" : "H3 模型"),
+    "9": node("BasicScheduler", { model: ["6", 0], scheduler: "simple", steps: 8, denoise: 1 }, "Turbo 8 步排程"),
+    "10": node("VAEDecode", { samples: ["14", 0], vae: ["11", 0] }, "解碼影像"),
+    "11": node("VAELoader", { vae_name: "minimax_h3_video_vae_int8_convrot.safetensors" }, "影片 VAE"),
+    "13": node("CLIPLoader", { clip_name: "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", type: "minimax", device: "default" }, "文字編碼器"),
+    "14": node("SamplerCustomAdvanced", { noise: ["15", 0], guider: ["16", 0], sampler: ["122", 0], sigmas: ["9", 0], latent_image: ["104", 1] }, "H3 採樣"),
+    "15": node("RandomNoise", { noise_seed: options.seed ?? randomSeed() }, "種子"),
+    "16": node("BasicGuider", { model: ["119", 0], conditioning: ["104", 0] }, "引導"),
+    "104": reference
+      ? node("MiniMaxH3ReferenceToVideo", { clip: ["13", 0], vae: ["11", 0], audio_vae: ["24", 0], prompt: options.prompt, width, height, length: 5, ref_image_size: "match" }, "H3 參考轉幀")
+      : node("MiniMaxH3ImageToVideo", { clip: ["13", 0], vae: ["11", 0], prompt: options.prompt, width, height, length: 5 }, "H3 文字轉幀"),
+    "119": node("MiniMaxH3MemoryEfficientSageAttentionPatch", { model: ["120", 0] }, "SageAttention 省顯存"),
+    "120": node("MiniMaxH3TurboLoRA", { model: ["6", 0], lora_name: TURBO_LORA, strength: 1, low_vram: false }, "H3 Turbo LoRA"),
+    "121": node("MiniMaxH3TurboSampler", {}, "H3 Turbo 採樣器"),
+    "122": node("H3CooledTurboSampler", { sampler: ["121", 0] }, "每步休息 12 秒"),
+    "200": node("ImageFromBatch", { image: ["10", 0], batch_index: 2, length: 1 }, "取中間一幀"),
+    "201": node("SaveImage", { images: ["200", 0], filename_prefix: "H3_Image/H3_Studio_IMG" }, "儲存 PNG"),
+  };
+
+  if (reference) {
+    graph["24"] = node("VAELoader", { vae_name: "minimax_h3_audio_vae_fp32.safetensors" }, "聲音 VAE");
+    uploadedReferenceImages.forEach((image, index) => {
+      const nodeId = String(300 + index);
+      graph[nodeId] = node("LoadImage", { image }, `參考圖片 ${index + 1}`);
+      graph["104"].inputs[`ref_images.ref_image_${index}`] = [nodeId, 0];
+    });
+  }
+
+  const extras = options.extraLoras ?? [];
+  if (extras.length) {
+    graph["120"].inputs.low_vram = true;
+    graph["119"].inputs.model = stackExtraLoras(graph, extras, ["120", 0]);
+  }
+  return graph;
+}
+
 async function request(path: string, init?: RequestInit) {
   const response = await fetch(`${COMFY_URL}${path}`, init);
   if (!response.ok) {
@@ -482,7 +547,8 @@ function standardMetadataFromHistory(entry: { prompt?: unknown }) {
   };
 }
 
-function videosFromHistory(history: Record<string, unknown>): GeneratedVideo[] {
+function videosFromHistory(history: Record<string, unknown>, kind: "video" | "image" = "video"): GeneratedVideo[] {
+  const pattern = kind === "image" ? /\.(png|jpg|jpeg|webp)$/i : /\.(mp4|webm|mov)$/i;
   const found: GeneratedVideo[] = [];
   for (const [promptId, rawEntry] of Object.entries(history)) {
     const entry = rawEntry as {
@@ -509,10 +575,11 @@ function videosFromHistory(history: Record<string, unknown>): GeneratedVideo[] {
         for (const item of value) {
           if (!item || typeof item !== "object" || !("filename" in item)) continue;
           const file = item as GeneratedVideo;
-          if (/\.(mp4|webm|mov)$/i.test(file.filename)) found.push({
+          if (pattern.test(file.filename)) found.push({
             filename: file.filename,
             subfolder: file.subfolder ?? "",
             type: file.type ?? "output",
+            kind,
             generationSeconds,
             promptId,
             ...workflowMetadata,
@@ -543,7 +610,7 @@ export async function getRecentVideos() {
   return files.outputs.map((file) => ({ ...file, ...historyByPath.get(`${file.subfolder}/${file.filename}`) }));
 }
 
-async function waitForResult(promptId: string, onStatus: (status: string) => void) {
+async function waitForResult(promptId: string, onStatus: (status: string) => void, kind: "video" | "image" = "video") {
   let announcedRun = false;
   for (;;) {
     const response = await request(`/history/${encodeURIComponent(promptId)}`);
@@ -551,12 +618,12 @@ async function waitForResult(promptId: string, onStatus: (status: string) => voi
     const entry = history[promptId] as { status?: { status_str?: string; completed?: boolean; messages?: unknown[] } } | undefined;
     if (entry) {
       if (entry.status?.status_str === "error") throw new Error("H3 生成失敗，請查看 ComfyUI 視窗中的錯誤訊息。 ");
-      const videos = videosFromHistory(history);
-      if (videos.length) return videos[0];
-      if (entry.status?.completed) throw new Error("工作流已完成，但找不到輸出的影片檔。 ");
+      const results = videosFromHistory(history, kind);
+      if (results.length) return results[0];
+      if (entry.status?.completed) throw new Error(kind === "image" ? "工作流已完成，但找不到輸出的圖片檔。 " : "工作流已完成，但找不到輸出的影片檔。 ");
     }
     if (!announcedRun) {
-      onStatus("H3 正在載入模型並生成影片…");
+      onStatus(kind === "image" ? "H3 正在載入模型並生成圖片…" : "H3 正在載入模型並生成影片…");
       announcedRun = true;
     }
     await new Promise((resolve) => window.setTimeout(resolve, 1500));
@@ -697,6 +764,67 @@ export async function createVideo(
     }
   }
   return video;
+}
+
+export async function createImage(
+  options: GenerationOptions,
+  onStatus: (status: string) => void,
+  referenceImages: ReferenceImageInput[] = [],
+) {
+  const reference = options.inputMode === "reference";
+  const seed = options.seed ?? randomSeed();
+  const [width, height] = resolveImageDimensions(options.aspect);
+  let uploadedReferenceImages: string[] = [];
+  if (reference) {
+    onStatus("正在載入參考圖片…");
+    uploadedReferenceImages = await Promise.all(referenceImages.map((item) => uploadImage(item.file)));
+  }
+  const runOptions: GenerationOptions = { ...options, seed, outputKind: "image" };
+  onStatus("正在建立圖片工作流…");
+  const startedAt = Date.now();
+  const response = await request("/prompt", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt: buildImageWorkflow(runOptions, uploadedReferenceImages), client_id: crypto.randomUUID() }),
+  });
+  const result = (await response.json()) as { prompt_id?: string; error?: { message?: string }; node_errors?: Record<string, unknown> };
+  if (!result.prompt_id) {
+    const details = result.error?.message ?? (result.node_errors ? JSON.stringify(result.node_errors) : "未知錯誤");
+    throw new Error(`ComfyUI 拒絕了工作流：${details}`);
+  }
+  onStatus("工作已進入佇列，等待 GPU 執行…");
+  const segment = await waitForResult(result.prompt_id, onStatus, "image");
+  const image: GeneratedVideo = {
+    ...segment,
+    kind: "image",
+    seed,
+    extraLoras: runOptions.extraLoras,
+    generationSeconds: segment.generationSeconds ?? Math.max(1, Math.round((Date.now() - startedAt) / 1000)),
+    profile: "cooled-turbo-8",
+    resolution: runOptions.resolution,
+    width,
+    height,
+    sound: false,
+    prompt: runOptions.prompt,
+    aspect: runOptions.aspect,
+    sourceMode: reference ? "reference" : "text",
+    inputMode: reference ? "reference" : "standard",
+    referenceFiles: reference ? uploadedReferenceImages : undefined,
+    referenceDefinitions: reference ? referenceImages.map(({ label, description }) => ({ label, description })) : undefined,
+    extendable: false,
+  };
+  if (image.generationSeconds) {
+    try {
+      await request("/h3-studio/output-metadata", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(image),
+      });
+    } catch {
+      // The image is complete even if its optional metadata cannot be saved.
+    }
+  }
+  return image;
 }
 
 export function outputUrl(video: GeneratedVideo) {
