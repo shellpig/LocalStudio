@@ -11,6 +11,8 @@ export type GenerationOptions = {
   inputMode?: "standard" | "reference";
   /** "video" (default) runs the normal pipeline; "image" renders a single 2K frame. */
   outputKind?: "video" | "image";
+  /** Seconds paused after every sampling step to keep the laptop from overheating (min 15). */
+  cooldownSeconds?: number;
   duration: number;
   aspect: "16:9" | "9:16" | "1:1";
   /** Reuse an exact seed. Omitted means a fresh random one. */
@@ -34,6 +36,7 @@ export type GeneratedVideo = {
   type: string;
   /** "image" marks a still rendered by the image pipeline; absent/"video" otherwise. */
   kind?: "video" | "image";
+  cooldownSeconds?: number;
   generationSeconds?: number;
   seed?: number;
   extraLoras?: ExtraLora[];
@@ -62,6 +65,9 @@ export type GeneratedVideo = {
 export type ExtraLora = { name: string; strength: number };
 
 export const TURBO_LORA = "minimax_h3_turbo_v4_step600_ema.safetensors";
+
+/** Minimum and default per-step cooldown. 12 s was measured to still overheat this machine. */
+export const MIN_COOLDOWN_SECONDS = 15;
 
 export type PromptEngine = "codex" | "grok";
 
@@ -182,7 +188,6 @@ function frameCount(seconds: number, continuation: boolean) {
 export function buildWorkflow(options: GenerationOptions, uploadedFirstImage?: string, uploadedLastImage?: string): PromptGraph {
   const [width, height] = resolveGenerationDimensions(options);
   const quality = options.profile === "quality";
-  const cooledFast = options.profile === "cooled-fast";
   const cooledTurbo8 = options.profile === "cooled-turbo-8";
   const safeLong = options.profile === "safe-long";
   const lowVram = options.profile === "low-vram";
@@ -190,6 +195,7 @@ export function buildWorkflow(options: GenerationOptions, uploadedFirstImage?: s
   const chainId = options.chainId ?? "preview";
   const clipIndex = options.clipIndex ?? 1;
   const latentPath = options.latentPath ?? `h3_context/${chainId}`;
+  const cooldown = Math.max(MIN_COOLDOWN_SECONDS, options.cooldownSeconds ?? MIN_COOLDOWN_SECONDS);
   const graph: PromptGraph = {
     "6": node("UNETLoader", { unet_name: "minimax_h3_fl2va_pruned_int8_convrot.safetensors", weight_dtype: "default" }, "H3 模型"),
     "9": node("BasicScheduler", { model: ["6", 0], scheduler: "simple", steps: quality ? 20 : cooledTurbo8 ? 8 : 6, denoise: 1 }, "採樣排程"),
@@ -198,7 +204,7 @@ export function buildWorkflow(options: GenerationOptions, uploadedFirstImage?: s
       : node("VAEDecode", { samples: ["14", 0], vae: ["11", 0] }, "解碼影像"),
     "11": node("VAELoader", { vae_name: quality ? "minimax_h3_video_vae_fp16.safetensors" : "minimax_h3_video_vae_int8_convrot.safetensors" }, "影片 VAE"),
     "13": node("CLIPLoader", { clip_name: "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", type: "minimax", device: "default" }, "文字編碼器"),
-    "14": node("SamplerCustomAdvanced", { noise: ["15", 0], guider: ["16", 0], sampler: quality ? ["123", 0] : cooledFast || cooledTurbo8 ? ["122", 0] : ["121", 0], sigmas: ["9", 0], latent_image: ["104", 1] }, "H3 採樣"),
+    "14": node("SamplerCustomAdvanced", { noise: ["15", 0], guider: ["16", 0], sampler: quality ? ["123", 0] : ["122", 0], sigmas: ["9", 0], latent_image: ["104", 1] }, "H3 採樣"),
     "15": node("RandomNoise", { noise_seed: options.seed ?? randomSeed() }, "隨機種子"),
     "16": node("BasicGuider", { model: ["119", 0], conditioning: ["104", 0] }, "引導"),
     "23": node("VAEDecodeAudio", { samples: ["14", 0], vae: ["24", 0] }, "解碼聲音"),
@@ -214,11 +220,11 @@ export function buildWorkflow(options: GenerationOptions, uploadedFirstImage?: s
 
   if (quality) {
     graph["17"] = node("KSamplerSelect", { sampler_name: "res_multistep" }, "原生採樣器");
-    graph["123"] = node("H3CooledSampler", { sampler: ["17", 0] }, "H3 QUALITY 冷卻採樣器");
+    graph["123"] = node("H3CooledSampler", { sampler: ["17", 0], seconds: cooldown }, "H3 QUALITY 冷卻採樣器");
   } else {
     graph["120"] = node("MiniMaxH3TurboLoRA", { model: ["6", 0], lora_name: TURBO_LORA, strength: 1, low_vram: safeLong || lowVram }, "H3 Turbo LoRA");
     graph["121"] = node("MiniMaxH3TurboSampler", {}, "H3 Turbo 採樣器");
-    if (cooledFast || cooledTurbo8) graph["122"] = node("H3CooledTurboSampler", { sampler: ["121", 0] }, "H3 冷卻採樣器");
+    graph["122"] = node("H3CooledTurboSampler", { sampler: ["121", 0], seconds: cooldown }, "H3 冷卻採樣器");
   }
 
   const extras = options.extraLoras ?? [];
@@ -284,6 +290,7 @@ export function buildReferenceWorkflow(options: GenerationOptions, uploadedRefer
   }
   const [width, height] = resolveGenerationDimensions(options);
   const continuation = Boolean(continuationFrame);
+  const cooldown = Math.max(MIN_COOLDOWN_SECONDS, options.cooldownSeconds ?? MIN_COOLDOWN_SECONDS);
   const graph: PromptGraph = {
     "6": node("UNETLoader", { unet_name: "minimax_h3_ref2va_pruned_w4a8_mixed.safetensors", weight_dtype: "default" }, "H3 Ref2VA W4A8 模型"),
     "9": node("BasicScheduler", { model: ["6", 0], scheduler: "simple", steps: 8, denoise: 1 }, "Turbo 8 步排程"),
@@ -308,7 +315,7 @@ export function buildReferenceWorkflow(options: GenerationOptions, uploadedRefer
     "119": node("MiniMaxH3MemoryEfficientSageAttentionPatch", { model: ["120", 0] }, "SageAttention 省顯存"),
     "120": node("MiniMaxH3TurboLoRA", { model: ["6", 0], lora_name: TURBO_LORA, strength: 1, low_vram: options.profile === "low-vram" }, "H3 Turbo LoRA"),
     "121": node("MiniMaxH3TurboSampler", {}, "H3 Turbo 採樣器"),
-    "122": node("H3CooledTurboSampler", { sampler: ["121", 0] }, "每步休息 12 秒"),
+    "122": node("H3CooledTurboSampler", { sampler: ["121", 0], seconds: cooldown }, "每步休息 15 秒"),
     "150": node("MiniMaxH3LatentLabLongMediaSampler", {
       initial_av: ["104", 1], long_media_plan: ["104", 2], guider: ["16", 0], sampler: ["122", 0],
       sigmas: ["9", 0], seed: options.seed ?? randomSeed(),
@@ -352,6 +359,7 @@ export function buildReferenceWorkflow(options: GenerationOptions, uploadedRefer
 export function buildImageWorkflow(options: GenerationOptions, uploadedReferenceImages: string[] = []): PromptGraph {
   const [width, height] = resolveImageDimensions(options.aspect);
   const reference = options.inputMode === "reference";
+  const cooldown = Math.max(MIN_COOLDOWN_SECONDS, options.cooldownSeconds ?? MIN_COOLDOWN_SECONDS);
   const graph: PromptGraph = {
     "6": node("UNETLoader", {
       unet_name: reference ? "minimax_h3_ref2va_pruned_w4a8_mixed.safetensors" : "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
@@ -370,7 +378,7 @@ export function buildImageWorkflow(options: GenerationOptions, uploadedReference
     "119": node("MiniMaxH3MemoryEfficientSageAttentionPatch", { model: ["120", 0] }, "SageAttention 省顯存"),
     "120": node("MiniMaxH3TurboLoRA", { model: ["6", 0], lora_name: TURBO_LORA, strength: 1, low_vram: false }, "H3 Turbo LoRA"),
     "121": node("MiniMaxH3TurboSampler", {}, "H3 Turbo 採樣器"),
-    "122": node("H3CooledTurboSampler", { sampler: ["121", 0] }, "每步休息 12 秒"),
+    "122": node("H3CooledTurboSampler", { sampler: ["121", 0], seconds: cooldown }, "每步休息 15 秒"),
     "200": node("ImageFromBatch", { image: ["10", 0], batch_index: 2, length: 1 }, "取中間一幀"),
     "201": node("SaveImage", { images: ["200", 0], filename_prefix: "H3_Image/H3_Studio_IMG" }, "儲存 PNG"),
   };
@@ -713,6 +721,7 @@ export async function createVideo(
   const metadata = {
     seed: runOptions.seed,
     extraLoras: runOptions.extraLoras,
+    cooldownSeconds: Math.max(MIN_COOLDOWN_SECONDS, runOptions.cooldownSeconds ?? MIN_COOLDOWN_SECONDS),
     generationSeconds: segment.generationSeconds ?? Math.max(1, Math.round((Date.now() - startedAt) / 1000)),
     chainId,
     clipIndex,
@@ -799,6 +808,7 @@ export async function createImage(
     kind: "image",
     seed,
     extraLoras: runOptions.extraLoras,
+    cooldownSeconds: Math.max(MIN_COOLDOWN_SECONDS, runOptions.cooldownSeconds ?? MIN_COOLDOWN_SECONDS),
     generationSeconds: segment.generationSeconds ?? Math.max(1, Math.round((Date.now() - startedAt) / 1000)),
     profile: "cooled-turbo-8",
     resolution: runOptions.resolution,

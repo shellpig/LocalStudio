@@ -13,6 +13,7 @@ import {
   getAvailableLoras,
   getRecentVideos,
   inputImageUrl,
+  MIN_COOLDOWN_SECONDS,
   optimizeVideoPrompt,
   outputUrl,
   PromptEngine,
@@ -59,6 +60,9 @@ export default function Home() {
   const [duration, setDuration] = useState(5);
   const [aspect, setAspect] = useState<GenerationOptions["aspect"]>("16:9");
   const [soundEnabled, setSoundEnabled] = useState(true);
+  // Per-step cooldown seconds; defaults to the last successful run once history loads.
+  const [cooldownSeconds, setCooldownSeconds] = useState(MIN_COOLDOWN_SECONDS);
+  const cooldownInitialized = useRef(false);
   // Empty means "pick a fresh random seed"; a number reproduces an earlier run.
   const [seed, setSeed] = useState("");
   const [extraLoras, setExtraLoras] = useState<ExtraLoraDraft[]>([]);
@@ -92,7 +96,15 @@ export default function Home() {
 
   const refreshHistory = useCallback(async () => {
     try {
-      setVideos(await getRecentVideos());
+      const items = await getRecentVideos();
+      setVideos(items);
+      if (!cooldownInitialized.current) {
+        const last = items.find((item) => typeof item.cooldownSeconds === "number")?.cooldownSeconds;
+        if (last) {
+          setCooldownSeconds(Math.max(MIN_COOLDOWN_SECONDS, last));
+          cooldownInitialized.current = true;
+        }
+      }
     } catch {
       // Connection state already communicates that ComfyUI is unavailable.
     }
@@ -168,6 +180,8 @@ export default function Home() {
   const outputSize = sizeLabels[resolution];
   const videoWorks = useMemo(() => videos.filter((item) => item.kind !== "image"), [videos]);
   const imageWorks = useMemo(() => videos.filter((item) => item.kind === "image"), [videos]);
+  // Steps that actually run per profile, for the cooldown-time estimate. Ref2VA and image are always 8.
+  const cooldownSteps = sourceMode === "reference" ? 8 : profile === "quality" ? 20 : profile === "cooled-turbo-8" ? 8 : 6;
   const imageAspect = anchorImageDimensions ? formatAspect(anchorImageDimensions.width, anchorImageDimensions.height) : null;
   const extremeImageRatio = anchorImageDimensions
     ? Math.max(anchorImageDimensions.width / anchorImageDimensions.height, anchorImageDimensions.height / anchorImageDimensions.width) > 2.4
@@ -381,6 +395,7 @@ export default function Home() {
               )
             : prompt.trim(),
           profile, resolution, duration, aspect, sound: soundEnabled, sourceMode,
+          cooldownSeconds: Math.max(MIN_COOLDOWN_SECONDS, cooldownSeconds),
           seed: seed.trim() ? Number(seed) : undefined,
           extraLoras: extraLoras.length ? extraLoras.map(({ name, strength }) => ({ name, strength })) : undefined,
           inputMode: sourceMode === "reference" ? "reference" : "standard",
@@ -427,6 +442,7 @@ export default function Home() {
             ? buildReferencePrompt(prompt, references)
             : prompt.trim(),
           profile, resolution, duration, aspect, sound: false, sourceMode,
+          cooldownSeconds: Math.max(MIN_COOLDOWN_SECONDS, cooldownSeconds),
           seed: seed.trim() ? Number(seed) : undefined,
           extraLoras: extraLoras.length ? extraLoras.map(({ name, strength }) => ({ name, strength })) : undefined,
           inputMode: sourceMode === "reference" ? "reference" : "standard",
@@ -601,6 +617,7 @@ export default function Home() {
     setDuration(nextDuration);
     setAspect(video.aspect ?? aspectFromDimensions(video.width, video.height));
     setSoundEnabled(video.sound);
+    if (typeof video.cooldownSeconds === "number") setCooldownSeconds(Math.max(MIN_COOLDOWN_SECONDS, video.cooldownSeconds));
     setSeed(video.seed === undefined ? "" : String(video.seed));
     setExtraLoras((video.extraLoras ?? []).map((item) => ({ ...item, id: nextLoraId.current++ })));
     setFirstImageFile(restoredFirst?.file ?? null);
@@ -1027,6 +1044,19 @@ export default function Home() {
                       aria-label="生成種子"
                     />
                   </label>
+                  <label>
+                    <span>降溫（每步秒數）</span>
+                    <input
+                      className="seed-input"
+                      type="number"
+                      min={MIN_COOLDOWN_SECONDS}
+                      step={1}
+                      value={cooldownSeconds}
+                      onChange={(event) => setCooldownSeconds(Number(event.target.value))}
+                      onBlur={(event) => setCooldownSeconds(Math.max(MIN_COOLDOWN_SECONDS, Math.round(Number(event.target.value)) || MIN_COOLDOWN_SECONDS))}
+                      aria-label="每步降溫秒數"
+                    />
+                  </label>
                 </div>
 
                 <div className="generate-actions">
@@ -1048,11 +1078,9 @@ export default function Home() {
                 {sourceMode === "image" && lastImageDimensions && (
                   <span> · 尾圖 {lastImageDimensions.width} × {lastImageDimensions.height}{firstImageDimensions ? "（依首圖比例置中裁切）" : "（作為畫面比例基準）"}</span>
                 )}
-                {sourceMode === "reference" && <span> · Ref2VA W4A8 · {continuationSource?.inputMode === "reference" ? continuationSource.referenceFiles?.length ?? 0 : referenceImages.filter((reference) => reference.file).length} 張參考圖 · Turbo 8 步，每步休息 12 秒</span>}
+                {sourceMode === "reference" && <span> · Ref2VA W4A8 · {continuationSource?.inputMode === "reference" ? continuationSource.referenceFiles?.length ?? 0 : referenceImages.filter((reference) => reference.file).length} 張參考圖 · Turbo 8 步</span>}
+                <span> · 每步降溫 {cooldownSeconds} 秒 ×{cooldownSteps} 步 ≈ {cooldownSeconds * cooldownSteps} 秒冷卻</span>
                 {profile === "safe-long" && <span> · 安全長片會低解析生成，再以 CPU 放大為 480P；畫面較柔且不支援延伸</span>}
-                {profile === "cooled-fast" && <span> · 第 1～6 步完成後各暫停 12 秒，讓 CPU 與 GPU 降溫</span>}
-                {profile === "cooled-turbo-8" && <span> · 第 1～8 步完成後各暫停 12 秒，額外增加約 96 秒冷卻時間</span>}
-                {profile === "quality" && <span> · 第 1～20 步完成後各暫停 12 秒，額外增加約 4 分鐘冷卻時間</span>}
                 {profile === "low-vram" && <span> · Turbo LoRA 改用 merge 模式，省下採樣時最大的一筆顯存配置；長片較不易爆顯存，畫面略柔</span>}
                 {resolution !== "safe" && <span> · 較高解析度的顯存與時間需求較高</span>}
                 {extremeImageRatio && <span> · 極端圖片比例可能降低生成品質</span>}

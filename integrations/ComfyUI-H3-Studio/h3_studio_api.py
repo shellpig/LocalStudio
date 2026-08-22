@@ -137,6 +137,10 @@ def validated_metadata(data):
     if isinstance(seed, int) and not isinstance(seed, bool) and 0 <= seed <= 9007199254740991:
         metadata["seed"] = seed
 
+    cooldown = data.get("cooldownSeconds")
+    if isinstance(cooldown, int) and not isinstance(cooldown, bool) and 1 <= cooldown <= 600:
+        metadata["cooldownSeconds"] = cooldown
+
     extra_loras = data.get("extraLoras")
     if isinstance(extra_loras, list) and 1 <= len(extra_loras) <= 20:
         normalized_loras = []
