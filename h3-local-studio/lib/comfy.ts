@@ -5,7 +5,7 @@ type PromptGraph = Record<string, GraphNode>;
 
 export type GenerationOptions = {
   prompt: string;
-  profile: "fast" | "cooled-fast" | "cooled-turbo-8" | "quality" | "safe-long" | "low-vram";
+  profile: "fast" | "cooled-fast" | "cooled-turbo-4" | "cooled-turbo-8" | "quality" | "safe-long" | "low-vram";
   resolution: "safe" | "clear" | "p480" | "p540" | "native";
   sourceMode?: "text" | "image" | "reference";
   inputMode?: "standard" | "reference";
@@ -189,6 +189,7 @@ export function buildWorkflow(options: GenerationOptions, uploadedFirstImage?: s
   const [width, height] = resolveGenerationDimensions(options);
   const quality = options.profile === "quality";
   const cooledTurbo8 = options.profile === "cooled-turbo-8";
+  const cooledTurbo4 = options.profile === "cooled-turbo-4";
   const safeLong = options.profile === "safe-long";
   const lowVram = options.profile === "low-vram";
   const continuation = options.continuationSource;
@@ -198,7 +199,7 @@ export function buildWorkflow(options: GenerationOptions, uploadedFirstImage?: s
   const cooldown = Math.max(MIN_COOLDOWN_SECONDS, options.cooldownSeconds ?? MIN_COOLDOWN_SECONDS);
   const graph: PromptGraph = {
     "6": node("UNETLoader", { unet_name: "minimax_h3_fl2va_pruned_int8_convrot.safetensors", weight_dtype: "default" }, "H3 模型"),
-    "9": node("BasicScheduler", { model: ["6", 0], scheduler: "simple", steps: quality ? 20 : cooledTurbo8 ? 8 : 6, denoise: 1 }, "採樣排程"),
+    "9": node("BasicScheduler", { model: ["6", 0], scheduler: "simple", steps: quality ? 20 : cooledTurbo8 ? 8 : cooledTurbo4 ? 4 : 6, denoise: 1 }, "採樣排程"),
     "10": safeLong
       ? node("VAEDecodeTiled", { samples: ["14", 0], vae: ["11", 0], tile_size: 512, overlap: 64, temporal_size: 32, temporal_overlap: 8 }, "分塊解碼影像")
       : node("VAEDecode", { samples: ["14", 0], vae: ["11", 0] }, "解碼影像"),
@@ -293,7 +294,7 @@ export function buildReferenceWorkflow(options: GenerationOptions, uploadedRefer
   const cooldown = Math.max(MIN_COOLDOWN_SECONDS, options.cooldownSeconds ?? MIN_COOLDOWN_SECONDS);
   const graph: PromptGraph = {
     "6": node("UNETLoader", { unet_name: "minimax_h3_ref2va_pruned_w4a8_mixed.safetensors", weight_dtype: "default" }, "H3 Ref2VA W4A8 模型"),
-    "9": node("BasicScheduler", { model: ["6", 0], scheduler: "simple", steps: 8, denoise: 1 }, "Turbo 8 步排程"),
+    "9": node("BasicScheduler", { model: ["6", 0], scheduler: "simple", steps: options.profile === "cooled-turbo-4" ? 4 : 8, denoise: 1 }, options.profile === "cooled-turbo-4" ? "Turbo 4 步排程" : "Turbo 8 步排程"),
     "10": node("MiniMaxH3LatentLabLongMediaDecode", {
       final_av: ["150", 0], long_media_plan: ["104", 2], enable_tiling: true, tile_size: 256, width: 512,
       temporal_size: 32, batch_size: 1, color_match_strength: 0,
@@ -665,7 +666,7 @@ export async function createVideo(
     chainId,
     clipIndex,
     latentPath,
-    profile: source ? (referenceContinuation ? (source.profile === "low-vram" ? "low-vram" : "cooled-turbo-8") : "quality") : options.profile,
+    profile: source ? (referenceContinuation ? (source.profile === "low-vram" ? "low-vram" : source.profile === "cooled-turbo-4" ? "cooled-turbo-4" : "cooled-turbo-8") : "quality") : options.profile,
     resolution: source?.resolution ?? options.resolution,
     sound: source?.sound ?? options.sound,
     inputMode: source?.inputMode ?? options.inputMode,

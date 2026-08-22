@@ -181,7 +181,7 @@ export default function Home() {
   const videoWorks = useMemo(() => videos.filter((item) => item.kind !== "image"), [videos]);
   const imageWorks = useMemo(() => videos.filter((item) => item.kind === "image"), [videos]);
   // Steps that actually run per profile, for the cooldown-time estimate. Ref2VA and image are always 8.
-  const cooldownSteps = sourceMode === "reference" ? 8 : profile === "quality" ? 20 : profile === "cooled-turbo-8" ? 8 : 6;
+  const cooldownSteps = profile === "cooled-turbo-4" ? 4 : sourceMode === "reference" ? 8 : profile === "quality" ? 20 : profile === "cooled-turbo-8" ? 8 : 6;
   const imageAspect = anchorImageDimensions ? formatAspect(anchorImageDimensions.width, anchorImageDimensions.height) : null;
   const extremeImageRatio = anchorImageDimensions
     ? Math.max(anchorImageDimensions.width / anchorImageDimensions.height, anchorImageDimensions.height / anchorImageDimensions.width) > 2.4
@@ -734,7 +734,7 @@ export default function Home() {
                     {continuationSource.inputMode === "reference"
                       ? `沿用原本 ${continuationSource.referenceFiles?.length ?? 0} 張參考圖與標籤，並以原片最後一幀銜定新片開頭；完成後會移除重複銜定幀再合併。`
                       : <>解析度、比例與聲音會沿用原片；延伸固定使用相容的 QUALITY 20 步。
-                        {(continuationSource.profile === "fast" || continuationSource.profile === "cooled-fast" || continuationSource.profile === "cooled-turbo-8") && " 原片使用 Turbo，但 Turbo LoRA 不相容動態延伸。"}</>}
+                        {(continuationSource.profile === "fast" || continuationSource.profile === "cooled-fast" || continuationSource.profile === "cooled-turbo-4" || continuationSource.profile === "cooled-turbo-8") && " 原片使用 Turbo，但 Turbo LoRA 不相容動態延伸。"}</>}
                     提示詞先延續上一鏡位，再描述接下來的動作。
                   </p>
                   <button onClick={() => setContinuationSource(null)}>取消延伸</button>
@@ -968,6 +968,7 @@ export default function Home() {
                       {sourceMode === "reference" ? (
                         <>
                           <option value="cooled-turbo-8">COOLED TURBO 8 · Turbo 8 步／每步降溫</option>
+                          <option value="cooled-turbo-4">COOLED TURBO 4 · Turbo 4 步／每步降溫</option>
                           <option value="low-vram">低顯存 · Turbo 8 步／LoRA merge</option>
                         </>
                       ) : (
@@ -975,6 +976,7 @@ export default function Home() {
                           <option value="fast">FAST · Turbo 6 步</option>
                           <option value="cooled-fast">COOLED FAST · Turbo 6 步／分段降溫</option>
                           <option value="cooled-turbo-8">COOLED TURBO 8 · Turbo 8 步／每步降溫</option>
+                          <option value="cooled-turbo-4">COOLED TURBO 4 · Turbo 4 步／每步降溫</option>
                           <option value="quality">QUALITY · 原生 20 步／每步降溫</option>
                           <option value="low-vram">低顯存 · Turbo 6 步／LoRA merge</option>
                           <option value="safe-long">安全長片 · 低解析生成／480P 輸出</option>
@@ -1078,7 +1080,7 @@ export default function Home() {
                 {sourceMode === "image" && lastImageDimensions && (
                   <span> · 尾圖 {lastImageDimensions.width} × {lastImageDimensions.height}{firstImageDimensions ? "（依首圖比例置中裁切）" : "（作為畫面比例基準）"}</span>
                 )}
-                {sourceMode === "reference" && <span> · Ref2VA W4A8 · {continuationSource?.inputMode === "reference" ? continuationSource.referenceFiles?.length ?? 0 : referenceImages.filter((reference) => reference.file).length} 張參考圖 · Turbo 8 步</span>}
+                {sourceMode === "reference" && <span> · Ref2VA W4A8 · {continuationSource?.inputMode === "reference" ? continuationSource.referenceFiles?.length ?? 0 : referenceImages.filter((reference) => reference.file).length} 張參考圖 · Turbo {profile === "cooled-turbo-4" ? 4 : 8} 步</span>}
                 <span> · 每步降溫 {cooldownSeconds} 秒 ×{cooldownSteps} 步 ≈ {cooldownSeconds * cooldownSteps} 秒冷卻</span>
                 {profile === "safe-long" && <span> · 安全長片會低解析生成，再以 CPU 放大為 480P；畫面較柔且不支援延伸</span>}
                 {profile === "low-vram" && <span> · Turbo LoRA 改用 merge 模式，省下採樣時最大的一筆顯存配置；長片較不易爆顯存，畫面略柔</span>}
