@@ -20,6 +20,7 @@ import {
   PromptEngine,
   QWEN_DEFAULT_STEPS,
   QWEN_DIMENSIONS,
+  QWEN_MAX_COUNT,
   QWEN_MAX_IMAGES,
   QWEN_MIN_COOLDOWN_SECONDS,
   QwenAspect,
@@ -107,6 +108,7 @@ export default function Home() {
   const [qwenSize, setQwenSize] = useState<QwenSize>("1mp");
   const [qwenSteps, setQwenSteps] = useState(QWEN_DEFAULT_STEPS);
   const [qwenSeed, setQwenSeed] = useState("");
+  const [qwenCount, setQwenCount] = useState(1);
   const [qwenCooldownSeconds, setQwenCooldownSeconds] = useState(QWEN_MIN_COOLDOWN_SECONDS);
   const [qwenImages, setQwenImages] = useState<QwenImageDraft[]>([]);
   const nextQwenImageId = useRef(1);
@@ -508,17 +510,18 @@ export default function Home() {
     setStatusText("正在送入本機 Qwen 佇列…");
     setIsGenerating(true);
     try {
-      const result = await createQwenImage(
+      const results = await createQwenImage(
         {
           prompt: qwenPrompt.trim(), aspect: qwenAspect, size: qwenSize, steps: qwenSteps,
           seed: qwenSeed.trim() ? Number(qwenSeed) : undefined,
           cooldownSeconds: Math.max(QWEN_MIN_COOLDOWN_SECONDS, qwenCooldownSeconds),
+          count: qwenCount,
         },
         qwenImages.map((image) => image.file),
         (phase) => setStatusText(phase),
+        (result) => setVideos((current) => [result, ...current.filter((item) => item.filename !== result.filename)]),
       );
-      setVideos((current) => [result, ...current.filter((item) => item.filename !== result.filename)]);
-      setStatusText("圖像已完成並儲存到 ComfyUI output/H3_Image。 ");
+      setStatusText(results.length > 1 ? `${results.length} 張圖像已完成並儲存到 ComfyUI output/H3_Image。 ` : "圖像已完成並儲存到 ComfyUI output/H3_Image。 ");
       setWorksTab("image");
       setView("works");
     } catch (caught) {
@@ -1297,6 +1300,14 @@ export default function Home() {
                     />
                   </label>
                   <label>
+                    <span>張數</span>
+                    <select value={qwenCount} onChange={(event) => setQwenCount(Number(event.target.value))} aria-label="每次生成張數">
+                      {Array.from({ length: QWEN_MAX_COUNT }, (_, index) => index + 1).map((count) => (
+                        <option key={count} value={count}>{count} 張</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
                     <span>降溫（每步秒數）</span>
                     <input
                       className="seed-input"
@@ -1323,6 +1334,7 @@ export default function Home() {
                   ? `${qwenImages.length} 張參考圖 · 依 <image1> 比例，約 ${qwenSize === "2k" ? 2048 : 1024} 像素`
                   : `輸出 ${QWEN_DIMENSIONS[qwenSize][qwenAspect].join(" × ")}`}
                 <span> · {qwenSteps} 步 · 每步降溫 {qwenCooldownSeconds} 秒 ≈ {qwenCooldownSeconds * qwenSteps} 秒冷卻</span>
+                {qwenCount > 1 && <span> · {qwenCount} 張各自不同種子{qwenSeed.trim() ? `（${qwenSeed} 起連號）` : ""}，逐張生成</span>}
                 <span> · PNG 儲存到 ComfyUI/output/H3_Image</span>
                 {qwenSize === "2k" && <span> · 2K 在 12 GB 顯存上尚未實測</span>}
               </div>

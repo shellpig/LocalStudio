@@ -130,12 +130,15 @@ export type QwenImageOptions = {
   steps: number;
   seed?: number;
   cooldownSeconds: number;
+  /** Images per run; each one is its own prompt with its own seed. Omitted means 1. */
+  count?: number;
 };
 
-/** Qwen steps run under a second, so 3 s keeps the GPU on a sawtooth instead of the 15 s H3 needs. */
-export const QWEN_MIN_COOLDOWN_SECONDS = 3;
+/** Qwen steps run under a second, so 2 s keeps the GPU on a sawtooth instead of the 15 s H3 needs. */
+export const QWEN_MIN_COOLDOWN_SECONDS = 2;
 export const QWEN_DEFAULT_STEPS = 25;
 export const QWEN_MAX_IMAGES = 4;
+export const QWEN_MAX_COUNT = 4;
 
 /** Qwen-Image 2.1 canvases (multiples of 32): ~1 MP, and ~4 MP for native 2K. */
 export const QWEN_DIMENSIONS: Record<QwenSize, Record<QwenAspect, readonly [number, number]>> = {
@@ -906,13 +909,36 @@ export async function createImage(
   return image;
 }
 
-export async function createQwenImage(options: QwenImageOptions, images: File[], onStatus: (status: string) => void) {
-  const seed = options.seed ?? randomSeed();
+/**
+ * Runs one Qwen prompt per image. A given seed reproduces the first image and
+ * the rest count up from it; each finished image is handed to `onImage` right
+ * away so the gallery fills in while later ones are still sampling.
+ */
+export async function createQwenImage(
+  options: QwenImageOptions,
+  images: File[],
+  onStatus: (status: string) => void,
+  onImage?: (image: GeneratedVideo) => void,
+) {
+  const count = Math.min(QWEN_MAX_COUNT, Math.max(1, options.count ?? 1));
   let uploadedImages: string[] = [];
   if (images.length) {
     onStatus("正在載入參考圖片…");
     uploadedImages = await Promise.all(images.map((file) => uploadImage(file)));
   }
+  const results: GeneratedVideo[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const seed = options.seed === undefined ? randomSeed() : options.seed + index;
+    const progress = count > 1 ? `第 ${index + 1} / ${count} 張 · ` : "";
+    const image = await runQwenPrompt({ ...options, seed }, uploadedImages, (phase) => onStatus(progress + phase));
+    results.push(image);
+    onImage?.(image);
+  }
+  return results;
+}
+
+async function runQwenPrompt(options: QwenImageOptions, uploadedImages: string[], onStatus: (status: string) => void) {
+  const seed = options.seed ?? randomSeed();
   const runOptions: QwenImageOptions = { ...options, seed };
   onStatus("正在建立 Qwen 工作流…");
   const startedAt = Date.now();
