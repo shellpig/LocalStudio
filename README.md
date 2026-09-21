@@ -9,6 +9,7 @@ Windows 本機版 MiniMax H3 影片製作介面。前端是一個網頁介面，
 - 參考圖轉影片（Ref2VA），最多 9 個參考項目，每項可設圖片、`@標籤` 與說明
 - 影片延伸：沿用原本的人物與場景，接續前一段的最後畫面，裁掉重疊幀後合併
 - 官方 H3 Prompt 優化：把一句白話描述改寫成 MiniMax 官方格式，可選 Codex 或 Grok 執行
+- 圖像編輯（Qwen-Image 2.1）：文字生圖，或上傳最多 4 張圖後用一句指令編輯，支援 7 種比例與 2K
 - 作品列表、刪除、下載，並保存生成設定 metadata
 
 ---
@@ -87,12 +88,12 @@ py -3.11 -m venv .venv
 ```powershell
 git clone https://github.com/comfyanonymous/ComfyUI.git ComfyUI
 cd ComfyUI
-git checkout 62b3c94b
+git checkout v0.37.0
 ..\.venv\Scripts\python.exe -m pip install -r requirements.txt
 cd ..
 ```
 
-`62b3c94b` 是實測通過的版本（v0.31.0 之後的 H3 記憶體修正）。較新的版本通常也可以，但沒有驗證過。
+`v0.37.0` 是實測通過的版本，也是圖像編輯頁需要的最低版本（Qwen-Image 2.1 節點從這版開始內建）。只做 H3 影片的話 `62b3c94b`（v0.31.0-15）也可以。較新的版本通常也可以，但沒有驗證過。
 
 ## 步驟 4：安裝加速套件
 
@@ -181,6 +182,21 @@ Get-Item ".\ComfyUI\custom_nodes\ComfyUI-H3-Studio" -Force | Select-Object LinkT
   SHA-256 `5f3a626cd72c93a8b9318d6760c510bc5092d2ab13aaba1f932c5bab07a416d3`
 
 `minimax_h3_ref2va_pruned_w4a8_mixed.safetensors` 只有參考圖模式會用到。不做 Ref2VA 可以先不下載，省 11 GB。
+
+### 圖像編輯（Qwen-Image 2.1，可選）
+
+只有「圖像編輯」頁會用到，三個檔案**合計 16.1 GB**，同樣以檔名載入：
+
+| 檔案 | 放置目錄 | 大小 |
+|---|---|---:|
+| `qwen_image_2.1_int8_convrot.safetensors` | `ComfyUI\models\diffusion_models\` | 6.76 GB |
+| `qwen3vl_8b_int8_convrot.safetensors` | `ComfyUI\models\text_encoders\` | 8.71 GB |
+| `qwen_image_2.1_vae_bf16.safetensors` | `ComfyUI\models\vae\` | 0.63 GB |
+
+來源：<https://huggingface.co/Comfy-Org/Qwen-Image-2.1>（各自在 `diffusion_models/`、`text_encoders/`、`vae/` 子目錄）。
+官方教學：<https://docs.comfy.org/zh/tutorials/image/qwen/qwen-image-2-1>。
+
+官方教學預設的文字編碼器是 `qwen3vl_8b_bf16.safetensors`（16.3 GB）；這裡改用 int8 版以配合 12 GB 顯存與 32 GB 記憶體，也是 ComfyUI 內建範本使用的檔案。
 
 驗證檔案都到位：
 
@@ -436,6 +452,16 @@ RTX 4080 Laptop 12 GB，608×352、24fps、124 frames（5.2 秒）：
 
 完整測試紀錄見 `H3_BENCHMARK.md`。
 
+圖像編輯（Qwen-Image 2.1 int8、25 步、每步降溫 3 秒）：
+
+| 設定 | 耗時 | 峰值 VRAM |
+|---|---:|---:|
+| 文字生圖 1024×1024 | 96 秒 | 10.4 GB |
+| 文字生圖 1344×768 | 115 秒 | — |
+| 編輯（1 張 1344×768 參考圖） | 136 秒 | 11.3 GB |
+
+每步實際運算不到 1 秒，時間大多是降溫；2K（4 MP）尚未在 12 GB 上實測。
+
 ---
 
 # 疑難排解
@@ -466,7 +492,7 @@ CLI 帳號額度用盡。Grok 免費層級額度很小，需要 SuperGrok 或 X 
 |---|---|
 | Python | 3.11.15 |
 | PyTorch | 2.10.0+cu130（CUDA 13.0） |
-| ComfyUI | v0.31.0-15-g62b3c94b |
+| ComfyUI | v0.37.0 |
 | triton-windows | 3.6.0.post26 |
 | SageAttention | 2.2.0+cu130torch2.10.0andhigher.post6 |
 | Pillow | 12.2.0 |
