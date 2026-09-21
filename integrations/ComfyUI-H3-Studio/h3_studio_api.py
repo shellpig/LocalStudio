@@ -127,6 +127,19 @@ def validated_metadata(data):
         metadata["height"] = data["height"]
     if data.get("model") == "qwen-image-2.1":
         metadata["model"] = data["model"]
+        if data.get("qwenAspect") in {"1:1", "16:9", "9:16", "3:2", "2:3", "4:3", "3:4"}:
+            metadata["qwenAspect"] = data["qwenAspect"]
+        if data.get("qwenSize") in {"1mp", "2k"}:
+            metadata["qwenSize"] = data["qwenSize"]
+        qwen_references = data.get("referenceFiles")
+        if isinstance(qwen_references, list) and 1 <= len(qwen_references) <= 16:
+            normalized_references = []
+            for filename in qwen_references:
+                target = resolve_input_image(filename)
+                if not target.is_file():
+                    raise ValueError("Reference image no longer exists")
+                normalized_references.append(target.relative_to(Path(folder_paths.get_input_directory()).resolve()).as_posix())
+            metadata["referenceFiles"] = normalized_references
     steps = data.get("steps")
     if isinstance(steps, int) and not isinstance(steps, bool) and 1 <= steps <= 100:
         metadata["steps"] = steps

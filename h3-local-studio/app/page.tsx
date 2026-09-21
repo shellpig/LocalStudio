@@ -197,6 +197,7 @@ export default function Home() {
   const outputSize = sizeLabels[resolution];
   const videoWorks = useMemo(() => videos.filter((item) => item.kind !== "image"), [videos]);
   const imageWorks = useMemo(() => videos.filter((item) => item.kind === "image"), [videos]);
+  const qwenWorks = useMemo(() => imageWorks.filter((item) => item.model === "qwen-image-2.1"), [imageWorks]);
   // Steps that actually run per profile, for the cooldown-time estimate. Ref2VA and image are always 8.
   const cooldownSteps = profile === "cooled-turbo-4" ? 4 : sourceMode === "reference" ? 8 : profile === "quality" ? 20 : profile === "cooled-turbo-8" ? 8 : 6;
   const imageAspect = anchorImageDimensions ? formatAspect(anchorImageDimensions.width, anchorImageDimensions.height) : null;
@@ -640,7 +641,7 @@ export default function Home() {
       warnings.push("原參考圖沒有保存在作品資料中，請重新選擇");
     }
 
-    let nextDuration = video.duration;
+    let nextDuration = video.duration ?? (video.kind === "image" ? duration : undefined);
     if (!nextDuration) {
       if ((video.clipIndex ?? 1) > 1) {
         nextDuration = 5;
@@ -722,6 +723,32 @@ export default function Home() {
     setError("");
     setView("create");
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function redoImage(image: GeneratedVideo) {
+    if (image.model !== "qwen-image-2.1") return redoVideo(image);
+    if (!image.prompt) throw new Error("這張圖片沒有保存生成設定，無法載入。 ");
+    const warnings: string[] = [];
+    const restored = await Promise.all((image.referenceFiles ?? []).map(async (path, index) => {
+      try {
+        return await restoreInputImage(path);
+      } catch {
+        warnings.push(`參考圖 ${index + 1} 已不存在，請重新選擇`);
+        return null;
+      }
+    }));
+    qwenImages.forEach((item) => URL.revokeObjectURL(item.preview));
+    setQwenImages(restored.flatMap((item) => (item ? [{ id: nextQwenImageId.current++, file: item.file, preview: item.preview }] : [])));
+    setQwenPrompt(image.prompt);
+    if (image.qwenAspect) setQwenAspect(image.qwenAspect);
+    if (image.qwenSize) setQwenSize(image.qwenSize);
+    if (image.steps) setQwenSteps(image.steps);
+    if (typeof image.cooldownSeconds === "number") setQwenCooldownSeconds(Math.max(QWEN_MIN_COOLDOWN_SECONDS, image.cooldownSeconds));
+    setQwenSeed(image.seed === undefined ? "" : String(image.seed));
+    setError("");
+    setNotice(`已載入「${image.filename}」的設定，可修改後再生成。${warnings.length ? ` 注意：${warnings.join("；")}。` : ""}`);
+    setView("edit");
+    window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
   }
 
   function chooseProfile(nextProfile: GenerationOptions["profile"]) {
@@ -1312,6 +1339,11 @@ export default function Home() {
                 <div className="progress-track"><span /></div>
               </div>
             )}
+
+            <section className="recent-section">
+              <div className="section-heading"><div><p className="eyebrow">LOCAL CREATIONS</p><h2>最近作品</h2></div><button onClick={() => { setWorksTab("image"); setView("works"); }}>查看全部 →</button></div>
+              <ImageGrid videos={qwenWorks.slice(0, 3)} onDelete={removeVideo} onRedo={redoImage} onReuseSeed={reuseSeed} emptyText="第一張圖，從一句話開始" />
+            </section>
           </>
         ) : (
           <section className="works-page">
@@ -1327,7 +1359,7 @@ export default function Home() {
               <button role="tab" aria-selected={worksTab === "image"} className={worksTab === "image" ? "active" : ""} onClick={() => setWorksTab("image")}>圖片（{imageWorks.length}）</button>
             </div>
             {worksTab === "image"
-              ? <ImageGrid videos={imageWorks} onDelete={removeVideo} onReuseSeed={reuseSeed} emptyText="目前還沒有本次工作階段的圖片" />
+              ? <ImageGrid videos={imageWorks} onDelete={removeVideo} onRedo={redoImage} onReuseSeed={reuseSeed} emptyText="目前還沒有本次工作階段的圖片" />
               : <VideoGrid videos={videoWorks} onDelete={removeVideo} onExtend={extendVideo} onRedo={redoVideo} onReuseSeed={reuseSeed} emptyText="目前還沒有本次工作階段的作品" />}
           </section>
         )}
@@ -1546,12 +1578,26 @@ function VideoGrid({ videos, onDelete, onExtend, onRedo, onReuseSeed, emptyText 
 type ImageGridActions = {
   videos: GeneratedVideo[];
   onDelete: (video: GeneratedVideo) => Promise<void>;
+  onRedo: (video: GeneratedVideo) => Promise<void>;
   onReuseSeed: (seed: number, source: GeneratedVideo) => void;
   emptyText: string;
 };
 
-function ImageGrid({ videos, onDelete, onReuseSeed, emptyText }: ImageGridActions) {
+function ImageGrid({ videos, onDelete, onRedo, onReuseSeed, emptyText }: ImageGridActions) {
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [loadingRedo, setLoadingRedo] = useState<string | null>(null);
+
+  async function loadForRedo(image: GeneratedVideo) {
+    const key = `${image.subfolder}/${image.filename}`;
+    setLoadingRedo(key);
+    try {
+      await onRedo(image);
+    } catch (caught) {
+      window.alert(caught instanceof Error ? caught.message : "無法載入這張圖片的設定。 ");
+    } finally {
+      setLoadingRedo(null);
+    }
+  }
 
   async function confirmDelete(image: GeneratedVideo) {
     const key = `${image.subfolder}/${image.filename}`;
@@ -1595,6 +1641,9 @@ function ImageGrid({ videos, onDelete, onReuseSeed, emptyText }: ImageGridAction
               <div className="card-actions">
                 <a href={src} target="_blank" rel="noreferrer">開啟 ↗</a>
                 <a className="img-action" href={src} download={image.filename}>下載</a>
+                <button className="img-action" onClick={() => void loadForRedo(image)} disabled={loadingRedo === key || !image.prompt} title={image.prompt ? undefined : "作品無原始設定"}>
+                  {loadingRedo === key ? "載入中…" : "再做一次"}
+                </button>
                 <button className="img-action delete" onClick={() => void confirmDelete(image)} disabled={deleting === key}>刪除</button>
               </div>
             </div>

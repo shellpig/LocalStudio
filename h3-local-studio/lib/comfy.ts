@@ -39,6 +39,8 @@ export type GeneratedVideo = {
   /** Which model made an image: absent for H3, "qwen-image-2.1" for the 圖像編輯 page. */
   model?: "qwen-image-2.1";
   steps?: number;
+  qwenAspect?: QwenAspect;
+  qwenSize?: QwenSize;
   cooldownSeconds?: number;
   generationSeconds?: number;
   seed?: number;
@@ -932,6 +934,8 @@ export async function createQwenImage(options: QwenImageOptions, images: File[],
     kind: "image",
     model: "qwen-image-2.1",
     steps: options.steps,
+    qwenAspect: options.aspect,
+    qwenSize: options.size,
     seed,
     cooldownSeconds: Math.max(QWEN_MIN_COOLDOWN_SECONDS, options.cooldownSeconds),
     generationSeconds: segment.generationSeconds ?? Math.max(1, Math.round((Date.now() - startedAt) / 1000)),
@@ -939,6 +943,7 @@ export async function createQwenImage(options: QwenImageOptions, images: File[],
     ...(uploadedImages.length ? {} : { width, height }),
     sound: false,
     prompt: options.prompt,
+    referenceFiles: uploadedImages.length ? uploadedImages : undefined,
     extendable: false,
   };
   try {
