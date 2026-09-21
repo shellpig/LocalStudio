@@ -5,6 +5,7 @@ import {
   buildReferencePrompt,
   checkConnection,
   createImage,
+  createQwenImage,
   createVideo,
   deleteVideo,
   GeneratedVideo,
@@ -17,12 +18,18 @@ import {
   optimizeVideoPrompt,
   outputUrl,
   PromptEngine,
+  QWEN_DEFAULT_STEPS,
+  QWEN_DIMENSIONS,
+  QWEN_MAX_IMAGES,
+  QWEN_MIN_COOLDOWN_SECONDS,
+  QwenAspect,
+  QwenSize,
   ReferenceImageInput,
   resolveOutputDimensions,
 } from "@/lib/comfy";
 import { CropRect, cropImageFile, ImageCropper, readImageDimensions } from "./image-cropper";
 
-type View = "create" | "works";
+type View = "create" | "edit" | "works";
 type SourceMode = "text" | "image" | "reference";
 type ImageDimensions = { width: number; height: number };
 type ReferenceImageDraft = {
@@ -37,6 +44,7 @@ type ReferenceImageDraft = {
   description: string;
 };
 type ExtraLoraDraft = ExtraLora & { id: number };
+type QwenImageDraft = { id: number; file: File; preview: string };
 type CropTarget = { kind: "first" } | { kind: "last" } | { kind: "reference"; id: number };
 
 const CROP_ASPECT: Record<GenerationOptions["aspect"], number> = { "16:9": 16 / 9, "9:16": 9 / 16, "1:1": 1 };
@@ -93,6 +101,15 @@ export default function Home() {
   const [videos, setVideos] = useState<GeneratedVideo[]>([]);
   const [continuationSource, setContinuationSource] = useState<GeneratedVideo | null>(null);
   const promptHighlightRef = useRef<HTMLDivElement>(null);
+  // 圖像編輯 (Qwen-Image 2.1) keeps its own settings; nothing here touches the H3 pipeline.
+  const [qwenPrompt, setQwenPrompt] = useState("");
+  const [qwenAspect, setQwenAspect] = useState<QwenAspect>("1:1");
+  const [qwenSize, setQwenSize] = useState<QwenSize>("1mp");
+  const [qwenSteps, setQwenSteps] = useState(QWEN_DEFAULT_STEPS);
+  const [qwenSeed, setQwenSeed] = useState("");
+  const [qwenCooldownSeconds, setQwenCooldownSeconds] = useState(QWEN_MIN_COOLDOWN_SECONDS);
+  const [qwenImages, setQwenImages] = useState<QwenImageDraft[]>([]);
+  const nextQwenImageId = useRef(1);
 
   const refreshHistory = useCallback(async () => {
     try {
@@ -462,6 +479,55 @@ export default function Home() {
     }
   }
 
+  function chooseQwenImages(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    setQwenImages((current) => [
+      ...current,
+      ...files.slice(0, Math.max(0, QWEN_MAX_IMAGES - current.length)).map((file) => ({ id: nextQwenImageId.current++, file, preview: URL.createObjectURL(file) })),
+    ]);
+  }
+
+  function removeQwenImage(id: number) {
+    setQwenImages((current) => {
+      const target = current.find((image) => image.id === id);
+      if (target) URL.revokeObjectURL(target.preview);
+      return current.filter((image) => image.id !== id);
+    });
+  }
+
+  async function generateQwenImage() {
+    if (!qwenPrompt.trim()) {
+      setError(qwenImages.length ? "請先描述要怎麼編輯這些圖片。 " : "請先描述想生成的圖像。 ");
+      return;
+    }
+    setError("");
+    setNotice("");
+    setElapsed(0);
+    setStatusText("正在送入本機 Qwen 佇列…");
+    setIsGenerating(true);
+    try {
+      const result = await createQwenImage(
+        {
+          prompt: qwenPrompt.trim(), aspect: qwenAspect, size: qwenSize, steps: qwenSteps,
+          seed: qwenSeed.trim() ? Number(qwenSeed) : undefined,
+          cooldownSeconds: Math.max(QWEN_MIN_COOLDOWN_SECONDS, qwenCooldownSeconds),
+        },
+        qwenImages.map((image) => image.file),
+        (phase) => setStatusText(phase),
+      );
+      setVideos((current) => [result, ...current.filter((item) => item.filename !== result.filename)]);
+      setStatusText("圖像已完成並儲存到 ComfyUI output/H3_Image。 ");
+      setWorksTab("image");
+      setView("works");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "生成失敗，請查看 ComfyUI 視窗。 ");
+    } finally {
+      setIsGenerating(false);
+      void refreshHistory();
+    }
+  }
+
   async function optimizePrompt() {
     if (!prompt.trim()) {
       setError("請先輸入想拍攝的內容，再使用官方格式優化。 ");
@@ -511,9 +577,14 @@ export default function Home() {
     setExtraLoras((current) => current.filter((item) => item.id !== id));
   }
 
-  function reuseSeed(value: number) {
-    setSeed(String(value));
-    setView("create");
+  function reuseSeed(value: number, source?: GeneratedVideo) {
+    if (source?.model === "qwen-image-2.1") {
+      setQwenSeed(String(value));
+      setView("edit");
+    } else {
+      setSeed(String(value));
+      setView("create");
+    }
     setNotice(`已套用種子 ${value}，同樣設定下會重現相同的畫面。`);
     window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
   }
@@ -673,6 +744,7 @@ export default function Home() {
 
   const navItems: Array<{ id: View; icon: string; label: string }> = [
     { id: "create", icon: "✦", label: "創作" },
+    { id: "edit", icon: "✎", label: "圖像編輯" },
     { id: "works", icon: "▦", label: "作品" },
   ];
 
@@ -1105,6 +1177,142 @@ export default function Home() {
 
             <RecentSection videos={videoWorks.slice(0, 3)} onViewAll={() => setView("works")} onDelete={removeVideo} onExtend={extendVideo} onRedo={redoVideo} onReuseSeed={reuseSeed} emptyText="第一支影片，從一句話開始" />
           </>
+        ) : view === "edit" ? (
+          <>
+            <div className="hero">
+              <p className="eyebrow">QWEN-IMAGE 2.1 · LOCAL</p>
+              <h1>圖像編輯</h1>
+              <p>用文字生成圖像，或上傳圖片後用一句指令編輯；擅長文字排版與多圖參考。</p>
+            </div>
+
+            <section className="composer" aria-label="圖像編輯設定">
+              <div className="qwen-upload-section">
+                <p>不加圖片就是文字生圖；加了圖片後輸出會依第一張的比例，描述裡可用 &lt;image1&gt;、&lt;image2&gt; 指定各張。</p>
+                <div className="qwen-image-grid">
+                  {qwenImages.map((image, index) => (
+                    <div className="qwen-image-slot" key={image.id}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={image.preview} alt={`參考圖 ${index + 1}`} />
+                      <span>&lt;image{index + 1}&gt;</span>
+                      <button type="button" onClick={() => removeQwenImage(image.id)}>移除</button>
+                    </div>
+                  ))}
+                  {qwenImages.length < QWEN_MAX_IMAGES && (
+                    <label className="image-dropzone qwen-image-slot" htmlFor="qwen-image-upload">
+                      <input id="qwen-image-upload" type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={chooseQwenImages} />
+                      <span className="upload-icon">＋</span>
+                      <strong>加入圖片</strong>
+                      <small>選填 · 最多 {QWEN_MAX_IMAGES} 張</small>
+                    </label>
+                  )}
+                </div>
+              </div>
+
+              <div className="prompt-editor">
+                <textarea
+                  value={qwenPrompt}
+                  onChange={(event) => setQwenPrompt(event.target.value)}
+                  placeholder={qwenImages.length
+                    ? "例如：保留 <image1> 的人物、五官與姿勢，把 <image2> 的淺藍色丹寧襯衫穿到人物身上，衣服自然貼合，維持原本背景與光線。"
+                    : "例如：雨後黃昏的台北街道，霓虹招牌上寫著「夜市」兩個字，一位穿深色風衣的人走過，水面倒影細緻，電影感寫實風格。"}
+                  aria-label="圖像描述"
+                />
+              </div>
+
+              <div className="composer-footer">
+                <div className="controls">
+                  <label>
+                    <span>畫面</span>
+                    {qwenImages.length ? (
+                      <select value="auto" disabled><option value="auto">依照 &lt;image1&gt;</option></select>
+                    ) : (
+                      <select value={qwenAspect} onChange={(event) => setQwenAspect(event.target.value as QwenAspect)}>
+                        <option value="1:1">1:1 方形</option>
+                        <option value="16:9">16:9 橫向</option>
+                        <option value="9:16">9:16 直向</option>
+                        <option value="3:2">3:2 橫向</option>
+                        <option value="2:3">2:3 直向</option>
+                        <option value="4:3">4:3 橫向</option>
+                        <option value="3:4">3:4 直向</option>
+                      </select>
+                    )}
+                  </label>
+                  <label>
+                    <span>尺寸</span>
+                    <select value={qwenSize} onChange={(event) => setQwenSize(event.target.value as QwenSize)}>
+                      <option value="1mp">{qwenImages.length ? "約 1024 像素" : QWEN_DIMENSIONS["1mp"][qwenAspect].join(" × ")} · 1MP</option>
+                      <option value="2k">{qwenImages.length ? "約 2048 像素" : QWEN_DIMENSIONS["2k"][qwenAspect].join(" × ")} · 2K</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>步數</span>
+                    <input
+                      className="seed-input"
+                      type="number"
+                      min={4}
+                      max={50}
+                      step={1}
+                      value={qwenSteps}
+                      onChange={(event) => setQwenSteps(Number(event.target.value))}
+                      onBlur={(event) => setQwenSteps(Math.min(50, Math.max(4, Math.round(Number(event.target.value)) || QWEN_DEFAULT_STEPS)))}
+                      aria-label="採樣步數"
+                    />
+                  </label>
+                  <label>
+                    <span>種子</span>
+                    <input
+                      className="seed-input"
+                      value={qwenSeed}
+                      inputMode="numeric"
+                      onChange={(event) => setQwenSeed(event.target.value.replace(/[^0-9]/g, ""))}
+                      placeholder="留空 = 每次隨機"
+                      aria-label="生成種子"
+                    />
+                  </label>
+                  <label>
+                    <span>降溫（每步秒數）</span>
+                    <input
+                      className="seed-input"
+                      type="number"
+                      min={QWEN_MIN_COOLDOWN_SECONDS}
+                      step={1}
+                      value={qwenCooldownSeconds}
+                      onChange={(event) => setQwenCooldownSeconds(Number(event.target.value))}
+                      onBlur={(event) => setQwenCooldownSeconds(Math.max(QWEN_MIN_COOLDOWN_SECONDS, Math.round(Number(event.target.value)) || QWEN_MIN_COOLDOWN_SECONDS))}
+                      aria-label="每步降溫秒數"
+                    />
+                  </label>
+                </div>
+
+                <div className="generate-actions">
+                  <button className="generate-button" onClick={generateQwenImage} disabled={!connected || isGenerating}>
+                    <span>✦</span>{isGenerating ? "生成中" : qwenImages.length ? "編輯圖像" : "生成圖像"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="setting-note">
+                Qwen-Image 2.1 int8 · {qwenImages.length
+                  ? `${qwenImages.length} 張參考圖 · 依 <image1> 比例，約 ${qwenSize === "2k" ? 2048 : 1024} 像素`
+                  : `輸出 ${QWEN_DIMENSIONS[qwenSize][qwenAspect].join(" × ")}`}
+                <span> · {qwenSteps} 步 · 每步降溫 {qwenCooldownSeconds} 秒 ≈ {qwenCooldownSeconds * qwenSteps} 秒冷卻</span>
+                <span> · PNG 儲存到 ComfyUI/output/H3_Image</span>
+                {qwenSize === "2k" && <span> · 2K 在 12 GB 顯存上尚未實測</span>}
+              </div>
+            </section>
+
+            {!connected && (
+              <div className="notice warning">請先執行 <code>start_h3_studio.bat</code>；介面偵測到 ComfyUI 後會自動連線。</div>
+            )}
+            {notice && <div className="notice success" aria-live="polite">{notice}</div>}
+            {error && <div className="notice error">{error}</div>}
+            {isGenerating && (
+              <div className="generation-status" aria-live="polite">
+                <div className="status-copy"><strong>{statusText}</strong><span>已經過 {elapsed} 秒，請勿關閉 ComfyUI。</span></div>
+                <div className="progress-track"><span /></div>
+              </div>
+            )}
+          </>
         ) : (
           <section className="works-page">
             <div className="works-heading">
@@ -1338,7 +1546,7 @@ function VideoGrid({ videos, onDelete, onExtend, onRedo, onReuseSeed, emptyText 
 type ImageGridActions = {
   videos: GeneratedVideo[];
   onDelete: (video: GeneratedVideo) => Promise<void>;
-  onReuseSeed: (seed: number) => void;
+  onReuseSeed: (seed: number, source: GeneratedVideo) => void;
   emptyText: string;
 };
 
@@ -1376,10 +1584,11 @@ function ImageGrid({ videos, onDelete, onReuseSeed, emptyText }: ImageGridAction
                 <span title={image.filename}>{image.filename}</span>
                 {image.generationSeconds !== undefined && <small>耗時 {image.generationSeconds} 秒</small>}
                 {image.width && image.height ? <small>{image.width} × {image.height}</small> : null}
+                {image.model === "qwen-image-2.1" && <small>Qwen-Image 2.1{image.steps ? ` · ${image.steps} 步` : ""}</small>}
                 {image.seed !== undefined && (
                   <small className="seed-line">
                     種子 <code>{image.seed}</code>
-                    <button type="button" onClick={() => onReuseSeed(image.seed!)}>沿用</button>
+                    <button type="button" onClick={() => onReuseSeed(image.seed!, image)}>沿用</button>
                   </small>
                 )}
               </div>

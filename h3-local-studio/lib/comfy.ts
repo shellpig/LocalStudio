@@ -36,6 +36,9 @@ export type GeneratedVideo = {
   type: string;
   /** "image" marks a still rendered by the image pipeline; absent/"video" otherwise. */
   kind?: "video" | "image";
+  /** Which model made an image: absent for H3, "qwen-image-2.1" for the 圖像編輯 page. */
+  model?: "qwen-image-2.1";
+  steps?: number;
   cooldownSeconds?: number;
   generationSeconds?: number;
   seed?: number;
@@ -113,6 +116,30 @@ const IMAGE_DIMENSIONS = {
   "9:16": [1152, 2048],
   "1:1": [1440, 1440],
 } as const;
+
+export type QwenAspect = "1:1" | "16:9" | "9:16" | "3:2" | "2:3" | "4:3" | "3:4";
+export type QwenSize = "1mp" | "2k";
+
+export type QwenImageOptions = {
+  prompt: string;
+  aspect: QwenAspect;
+  /** Text-to-image canvas, or the pixel budget each reference image is resized to. */
+  size: QwenSize;
+  steps: number;
+  seed?: number;
+  cooldownSeconds: number;
+};
+
+/** Qwen steps run under a second, so 3 s keeps the GPU on a sawtooth instead of the 15 s H3 needs. */
+export const QWEN_MIN_COOLDOWN_SECONDS = 3;
+export const QWEN_DEFAULT_STEPS = 25;
+export const QWEN_MAX_IMAGES = 4;
+
+/** Qwen-Image 2.1 canvases (multiples of 32): ~1 MP, and ~4 MP for native 2K. */
+export const QWEN_DIMENSIONS: Record<QwenSize, Record<QwenAspect, readonly [number, number]>> = {
+  "1mp": { "1:1": [1024, 1024], "16:9": [1344, 768], "9:16": [768, 1344], "3:2": [1216, 832], "2:3": [832, 1216], "4:3": [1152, 896], "3:4": [896, 1152] },
+  "2k": { "1:1": [2048, 2048], "16:9": [2688, 1536], "9:16": [1536, 2688], "3:2": [2432, 1632], "2:3": [1632, 2432], "4:3": [2336, 1760], "3:4": [1760, 2336] },
+};
 
 export function resolveImageDimensions(aspect: GenerationOptions["aspect"]): [number, number] {
   return [...IMAGE_DIMENSIONS[aspect]];
@@ -397,6 +424,45 @@ export function buildImageWorkflow(options: GenerationOptions, uploadedReference
   if (extras.length) {
     graph["120"].inputs.low_vram = true;
     graph["119"].inputs.model = stackExtraLoras(graph, extras, ["120", 0]);
+  }
+  return graph;
+}
+
+/**
+ * Qwen-Image 2.1, mirroring ComfyUI's t2i / image-edit templates. With
+ * reference images the encoder also emits the latent (sized to the first
+ * image at `resolution`) and the model runs behind the KV cache node.
+ */
+export function buildQwenImageWorkflow(options: QwenImageOptions, uploadedImages: string[] = []): PromptGraph {
+  const [width, height] = QWEN_DIMENSIONS[options.size][options.aspect];
+  const editing = uploadedImages.length > 0;
+  const cooldown = Math.max(QWEN_MIN_COOLDOWN_SECONDS, options.cooldownSeconds);
+  const graph: PromptGraph = {
+    "1": node("UNETLoader", { unet_name: "qwen_image_2.1_int8_convrot.safetensors", weight_dtype: "default" }, "Qwen-Image 2.1"),
+    "2": node("CLIPLoader", { clip_name: "qwen3vl_8b_int8_convrot.safetensors", type: "qwen_image", device: "default" }, "Qwen3-VL 文字編碼器"),
+    "3": node("VAELoader", { vae_name: "qwen_image_2.1_vae_bf16.safetensors" }, "Qwen VAE"),
+    "4": node("TextEncodeQwenImage21", {
+      clip: ["2", 0], prompt: options.prompt, negative_prompt: "", resolution: options.size === "2k" ? 2048 : 1024, ...(editing ? { vae: ["3", 0] } : {}),
+    }, "編碼提示與參考圖"),
+    "6": node("KSamplerSelect", { sampler_name: "euler" }, "Euler"),
+    "7": node("H3CooledSampler", { sampler: ["6", 0], seconds: cooldown }, `每步休息 ${cooldown} 秒`),
+    "8": node("BasicScheduler", { model: ["1", 0], scheduler: "simple", steps: options.steps, denoise: 1 }, "排程"),
+    "9": node("SamplerCustom", {
+      model: editing ? ["12", 0] : ["1", 0], add_noise: true, noise_seed: options.seed ?? randomSeed(), cfg: 1,
+      positive: ["4", 0], negative: ["4", 1], sampler: ["7", 0], sigmas: ["8", 0], latent_image: editing ? ["4", 2] : ["5", 0],
+    }, "Qwen 採樣"),
+    "10": node("VAEDecode", { samples: ["9", 0], vae: ["3", 0] }, "解碼影像"),
+    "11": node("SaveImage", { images: ["10", 0], filename_prefix: "H3_Image/H3_Studio_QWEN" }, "儲存 PNG"),
+  };
+  if (editing) {
+    graph["12"] = node("QwenImage21Cache", { model: ["1", 0], device: "auto", dtype: "default" }, "KV 快取");
+    uploadedImages.forEach((image, index) => {
+      const nodeId = String(300 + index);
+      graph[nodeId] = node("LoadImage", { image }, `參考圖 ${index + 1}`);
+      graph["4"].inputs[`images.image_${index + 1}`] = [nodeId, 0];
+    });
+  } else {
+    graph["5"] = node("EmptyLatentImage", { width, height, batch_size: 1 }, "空白畫布");
   }
   return graph;
 }
@@ -834,6 +900,55 @@ export async function createImage(
     } catch {
       // The image is complete even if its optional metadata cannot be saved.
     }
+  }
+  return image;
+}
+
+export async function createQwenImage(options: QwenImageOptions, images: File[], onStatus: (status: string) => void) {
+  const seed = options.seed ?? randomSeed();
+  let uploadedImages: string[] = [];
+  if (images.length) {
+    onStatus("正在載入參考圖片…");
+    uploadedImages = await Promise.all(images.map((file) => uploadImage(file)));
+  }
+  const runOptions: QwenImageOptions = { ...options, seed };
+  onStatus("正在建立 Qwen 工作流…");
+  const startedAt = Date.now();
+  const response = await request("/prompt", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt: buildQwenImageWorkflow(runOptions, uploadedImages), client_id: crypto.randomUUID() }),
+  });
+  const result = (await response.json()) as { prompt_id?: string; error?: { message?: string }; node_errors?: Record<string, unknown> };
+  if (!result.prompt_id) {
+    const details = result.error?.message ?? (result.node_errors ? JSON.stringify(result.node_errors) : "未知錯誤");
+    throw new Error(`ComfyUI 拒絕了工作流：${details}`);
+  }
+  onStatus("工作已進入佇列，等待 GPU 執行…");
+  const segment = await waitForResult(result.prompt_id, onStatus, "image");
+  const [width, height] = QWEN_DIMENSIONS[options.size][options.aspect];
+  const image: GeneratedVideo = {
+    ...segment,
+    kind: "image",
+    model: "qwen-image-2.1",
+    steps: options.steps,
+    seed,
+    cooldownSeconds: Math.max(QWEN_MIN_COOLDOWN_SECONDS, options.cooldownSeconds),
+    generationSeconds: segment.generationSeconds ?? Math.max(1, Math.round((Date.now() - startedAt) / 1000)),
+    // Edits follow the reference image, so the canvas is only known for text-to-image.
+    ...(uploadedImages.length ? {} : { width, height }),
+    sound: false,
+    prompt: options.prompt,
+    extendable: false,
+  };
+  try {
+    await request("/h3-studio/output-metadata", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(image),
+    });
+  } catch {
+    // The image is complete even if its optional metadata cannot be saved.
   }
   return image;
 }

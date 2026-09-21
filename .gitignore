@@ -31,6 +31,9 @@ __pycache__/
 /H3_ENV_BEFORE.md
 /H3_ComfyUI_RTX4080Laptop_12GB_Codex_Setup.md
 /requirements-before-h3.txt
+/requirements-before-qwen.txt
+/requirements-after-qwen.txt
+/comfyui-commit-before-qwen.txt
 
 # Office documents and their lock files
 *.docx

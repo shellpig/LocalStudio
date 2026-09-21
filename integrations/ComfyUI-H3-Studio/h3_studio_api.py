@@ -121,10 +121,15 @@ def validated_metadata(data):
         metadata["profile"] = data["profile"]
     if data.get("resolution") in {"safe", "clear", "p480", "p540", "native"}:
         metadata["resolution"] = data["resolution"]
-    if isinstance(data.get("width"), int) and 128 <= data["width"] <= 2048:
+    if isinstance(data.get("width"), int) and 128 <= data["width"] <= 4096:
         metadata["width"] = data["width"]
-    if isinstance(data.get("height"), int) and 128 <= data["height"] <= 2048:
+    if isinstance(data.get("height"), int) and 128 <= data["height"] <= 4096:
         metadata["height"] = data["height"]
+    if data.get("model") == "qwen-image-2.1":
+        metadata["model"] = data["model"]
+    steps = data.get("steps")
+    if isinstance(steps, int) and not isinstance(steps, bool) and 1 <= steps <= 100:
+        metadata["steps"] = steps
     if isinstance(data.get("sound"), bool):
         metadata["sound"] = data["sound"]
     if isinstance(data.get("prompt"), str):
