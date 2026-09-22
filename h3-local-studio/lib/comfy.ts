@@ -134,8 +134,9 @@ export type QwenImageOptions = {
   count?: number;
 };
 
-/** Qwen steps run under a second, so 2 s keeps the GPU on a sawtooth instead of the 15 s H3 needs. */
-export const QWEN_MIN_COOLDOWN_SECONDS = 2;
+/** Qwen steps run under a second, so 2 s keeps the GPU on a sawtooth instead of the 15 s H3 needs. 0 disables cooling entirely. */
+export const QWEN_MIN_COOLDOWN_SECONDS = 0;
+export const QWEN_DEFAULT_COOLDOWN_SECONDS = 2;
 export const QWEN_DEFAULT_STEPS = 25;
 export const QWEN_MAX_IMAGES = 4;
 export const QWEN_MAX_COUNT = 4;

@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   buildReferencePrompt,
   checkConnection,
@@ -18,6 +18,7 @@ import {
   optimizeVideoPrompt,
   outputUrl,
   PromptEngine,
+  QWEN_DEFAULT_COOLDOWN_SECONDS,
   QWEN_DEFAULT_STEPS,
   QWEN_DIMENSIONS,
   QWEN_MAX_COUNT,
@@ -109,9 +110,13 @@ export default function Home() {
   const [qwenSteps, setQwenSteps] = useState(QWEN_DEFAULT_STEPS);
   const [qwenSeed, setQwenSeed] = useState("");
   const [qwenCount, setQwenCount] = useState(1);
-  const [qwenCooldownSeconds, setQwenCooldownSeconds] = useState(QWEN_MIN_COOLDOWN_SECONDS);
+  const [qwenCooldownSeconds, setQwenCooldownSeconds] = useState(QWEN_DEFAULT_COOLDOWN_SECONDS);
   const [qwenImages, setQwenImages] = useState<QwenImageDraft[]>([]);
   const nextQwenImageId = useRef(1);
+  const qwenPromptRef = useRef<HTMLTextAreaElement>(null);
+  // Set while the caret sits just after an "@" the menu can complete into <imageN>.
+  const [qwenMention, setQwenMention] = useState<{ start: number; query: string } | null>(null);
+  const [qwenMentionIndex, setQwenMentionIndex] = useState(0);
 
   const refreshHistory = useCallback(async () => {
     try {
@@ -497,6 +502,52 @@ export default function Home() {
       if (target) URL.revokeObjectURL(target.preview);
       return current.filter((image) => image.id !== id);
     });
+  }
+
+  // Only images that exist are offered, so the menu cannot name a missing one.
+  const qwenMentionMatches = useMemo(() => (qwenMention
+    ? qwenImages
+        .map((image, index) => ({ image, index }))
+        .filter(({ index }) => !qwenMention.query || String(index + 1).startsWith(qwenMention.query))
+    : []), [qwenImages, qwenMention]);
+  const qwenMentionActive = Math.min(qwenMentionIndex, Math.max(0, qwenMentionMatches.length - 1));
+
+  function syncQwenMention(field: HTMLTextAreaElement) {
+    const match = qwenImages.length ? /(?:^|\s)@(\d*)$/.exec(field.value.slice(0, field.selectionStart)) : null;
+    if (!match) {
+      setQwenMention(null);
+      return;
+    }
+    setQwenMention({ start: field.selectionStart - match[1].length - 1, query: match[1] });
+    setQwenMentionIndex(0);
+  }
+
+  function insertQwenMention(index: number) {
+    const field = qwenPromptRef.current;
+    if (!field || !qwenMention) return;
+    const tag = `<image${index + 1}>`;
+    setQwenPrompt(`${field.value.slice(0, qwenMention.start)}${tag}${field.value.slice(field.selectionStart)}`);
+    setQwenMention(null);
+    const caret = qwenMention.start + tag.length;
+    window.requestAnimationFrame(() => {
+      field.focus();
+      field.setSelectionRange(caret, caret);
+    });
+  }
+
+  function handleQwenPromptKeys(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (!qwenMentionMatches.length) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const step = event.key === "ArrowDown" ? 1 : qwenMentionMatches.length - 1;
+      setQwenMentionIndex((current) => (Math.min(current, qwenMentionMatches.length - 1) + step) % qwenMentionMatches.length);
+    } else if (event.key === "Enter" || event.key === "Tab") {
+      event.preventDefault();
+      insertQwenMention(qwenMentionMatches[qwenMentionActive].index);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      setQwenMention(null);
+    }
   }
 
   async function generateQwenImage() {
@@ -1217,7 +1268,7 @@ export default function Home() {
 
             <section className="composer" aria-label="圖像編輯設定">
               <div className="qwen-upload-section">
-                <p>不加圖片就是文字生圖；加了圖片後輸出會依第一張的比例，描述裡可用 &lt;image1&gt;、&lt;image2&gt; 指定各張。</p>
+                <p>不加圖片就是文字生圖；加了圖片後輸出會依第一張的比例，描述裡打 @ 就能挑要指定哪一張（插入 &lt;image1&gt;、&lt;image2&gt;）。</p>
                 <div className="qwen-image-grid">
                   {qwenImages.map((image, index) => (
                     <div className="qwen-image-slot" key={image.id}>
@@ -1240,13 +1291,43 @@ export default function Home() {
 
               <div className="prompt-editor">
                 <textarea
+                  ref={qwenPromptRef}
                   value={qwenPrompt}
-                  onChange={(event) => setQwenPrompt(event.target.value)}
+                  onChange={(event) => {
+                    setQwenPrompt(event.target.value);
+                    syncQwenMention(event.target);
+                  }}
+                  onKeyUp={(event) => syncQwenMention(event.currentTarget)}
+                  onClick={(event) => syncQwenMention(event.currentTarget)}
+                  onKeyDown={handleQwenPromptKeys}
+                  onBlur={() => setQwenMention(null)}
                   placeholder={qwenImages.length
                     ? "例如：保留 <image1> 的人物、五官與姿勢，把 <image2> 的淺藍色丹寧襯衫穿到人物身上，衣服自然貼合，維持原本背景與光線。"
                     : "例如：雨後黃昏的台北街道，霓虹招牌上寫著「夜市」兩個字，一位穿深色風衣的人走過，水面倒影細緻，電影感寫實風格。"}
                   aria-label="圖像描述"
                 />
+                {qwenMentionMatches.length > 0 && (
+                  <ul className="mention-menu" aria-label="參考圖清單">
+                    {qwenMentionMatches.map(({ image, index }, position) => (
+                      <li key={image.id}>
+                        <button
+                          type="button"
+                          className={position === qwenMentionActive ? "active" : ""}
+                          // The caret has to survive the click, so the textarea must not lose focus.
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            insertQwenMention(index);
+                          }}
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={image.preview} alt="" />
+                          <span>參考圖 {index + 1}</span>
+                          <code>&lt;image{index + 1}&gt;</code>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
 
               <div className="composer-footer">
@@ -1334,6 +1415,7 @@ export default function Home() {
                   ? `${qwenImages.length} 張參考圖 · 依 <image1> 比例，約 ${qwenSize === "2k" ? 2048 : 1024} 像素`
                   : `輸出 ${QWEN_DIMENSIONS[qwenSize][qwenAspect].join(" × ")}`}
                 <span> · {qwenSteps} 步 · 每步降溫 {qwenCooldownSeconds} 秒 ≈ {qwenCooldownSeconds * qwenSteps} 秒冷卻</span>
+                {qwenCooldownSeconds === 0 && <span> · 0 秒＝完全不降溫，長時間連跑請自行留意溫度</span>}
                 {qwenCount > 1 && <span> · {qwenCount} 張各自不同種子{qwenSeed.trim() ? `（${qwenSeed} 起連號）` : ""}，逐張生成</span>}
                 <span> · PNG 儲存到 ComfyUI/output/H3_Image</span>
                 {qwenSize === "2k" && <span> · 2K 在 12 GB 顯存上尚未實測</span>}

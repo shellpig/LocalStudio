@@ -281,3 +281,8 @@ button { color: inherit; }
 .lora-row > button { flex: 0 0 auto; border: 1px solid #343641; border-radius: 8px; background: transparent; padding: 8px 10px; color: #8b8d9b; font-size: 11px; cursor: pointer; }
 .lora-row > button:hover { border-color: #55404a; color: #e0b4b4; }
 .lora-stack-note { margin: 11px 0 0; color: #7f8290; font-size: 10px; line-height: 1.6; }
+.mention-menu { position: absolute; z-index: 2; left: 24px; bottom: 14px; display: grid; gap: 2px; margin: 0; padding: 6px; list-style: none; border: 1px solid #343642; border-radius: 11px; background: rgba(14,15,21,.97); box-shadow: 0 16px 40px rgba(0,0,0,.45); }
+.mention-menu button { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; border-radius: 8px; background: transparent; padding: 6px 10px 6px 6px; color: #c5c6cf; font-size: 12px; cursor: pointer; }
+.mention-menu button.active, .mention-menu button:hover { background: #211b35; color: #e7e2ff; }
+.mention-menu img { width: 34px; height: 34px; border-radius: 6px; object-fit: cover; background: #0b0c11; }
+.mention-menu code { color: #b69cff; font-size: 11px; }
