@@ -46,8 +46,15 @@ type ReferenceImageDraft = {
   description: string;
 };
 type ExtraLoraDraft = ExtraLora & { id: number };
-type QwenImageDraft = { id: number; file: File; preview: string };
-type CropTarget = { kind: "first" } | { kind: "last" } | { kind: "reference"; id: number };
+type QwenImageDraft = {
+  id: number;
+  file: File;
+  /** The image as chosen, before any crop. Kept so the crop can be redone. */
+  originalFile: File;
+  crop: CropRect | null;
+  preview: string;
+};
+type CropTarget = { kind: "first" } | { kind: "last" } | { kind: "reference"; id: number } | { kind: "qwen"; id: number };
 
 const CROP_ASPECT: Record<GenerationOptions["aspect"], number> = { "16:9": 16 / 9, "9:16": 9 / 16, "1:1": 1 };
 
@@ -273,6 +280,7 @@ export default function Home() {
 
   function croppableFile(target: CropTarget) {
     if (target.kind === "reference") return referenceImages.find((reference) => reference.id === target.id)?.originalFile ?? null;
+    if (target.kind === "qwen") return qwenImages.find((image) => image.id === target.id)?.originalFile ?? null;
     return target.kind === "first" ? firstImageOriginal : lastImageOriginal;
   }
 
@@ -283,6 +291,14 @@ export default function Home() {
         if (reference.id !== target.id) return reference;
         if (reference.preview) URL.revokeObjectURL(reference.preview);
         return { ...reference, file, crop, preview, dimensions };
+      }));
+      return;
+    }
+    if (target.kind === "qwen") {
+      setQwenImages((images) => images.map((image) => {
+        if (image.id !== target.id) return image;
+        URL.revokeObjectURL(image.preview);
+        return { ...image, file, crop, preview };
       }));
       return;
     }
@@ -493,7 +509,9 @@ export default function Home() {
     event.target.value = "";
     setQwenImages((current) => [
       ...current,
-      ...files.slice(0, Math.max(0, QWEN_MAX_IMAGES - current.length)).map((file) => ({ id: nextQwenImageId.current++, file, preview: URL.createObjectURL(file) })),
+      ...files.slice(0, Math.max(0, QWEN_MAX_IMAGES - current.length)).map((file) => ({
+        id: nextQwenImageId.current++, file, originalFile: file, crop: null, preview: URL.createObjectURL(file),
+      })),
     ]);
   }
 
@@ -794,7 +812,10 @@ export default function Home() {
       }
     }));
     qwenImages.forEach((item) => URL.revokeObjectURL(item.preview));
-    setQwenImages(restored.flatMap((item) => (item ? [{ id: nextQwenImageId.current++, file: item.file, preview: item.preview }] : [])));
+    // A restored image is whatever was sent last time, so it is its own original.
+    setQwenImages(restored.flatMap((item) => (item
+      ? [{ id: nextQwenImageId.current++, file: item.file, originalFile: item.file, crop: null, preview: item.preview }]
+      : [])));
     setQwenPrompt(image.prompt);
     if (image.qwenAspect) setQwenAspect(image.qwenAspect);
     if (image.qwenSize) setQwenSize(image.qwenSize);
@@ -835,7 +856,9 @@ export default function Home() {
   const cropFile = cropTarget ? croppableFile(cropTarget) : null;
   const cropReferenceIndex = cropTarget?.kind === "reference"
     ? referenceImages.findIndex((reference) => reference.id === cropTarget.id) + 1
-    : 0;
+    : cropTarget?.kind === "qwen"
+      ? qwenImages.findIndex((image) => image.id === cropTarget.id) + 1
+      : 0;
 
   return (
     <main className="studio-shell">
@@ -1278,6 +1301,11 @@ export default function Home() {
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={image.preview} alt={`參考圖 ${index + 1}`} />
                       <span>&lt;image{index + 1}&gt;</span>
+                      <CropActions
+                        hasCrop={Boolean(image.crop)}
+                        onCrop={() => setCropTarget({ kind: "qwen", id: image.id })}
+                        onRestore={() => void restoreOriginalImage({ kind: "qwen", id: image.id })}
+                      />
                       <button type="button" onClick={() => removeQwenImage(image.id)}>移除</button>
                     </div>
                   ))}
@@ -1473,13 +1501,15 @@ export default function Home() {
       {cropTarget && cropFile && (
         <ImageCropper
           file={cropFile}
-          title={cropTarget.kind === "reference"
+          title={cropTarget.kind === "reference" || cropTarget.kind === "qwen"
             ? `裁切參考圖 ${cropReferenceIndex}`
             : cropTarget.kind === "first" ? "裁切首幀圖片" : "裁切尾幀圖片"}
-          hint={cropTarget.kind === "reference"
-            ? "只留下要參考的部分，例如臉部。參考圖會被縮到與輸出畫面相同的像素量，所以裁得越準，臉的細節就越多。裁切比例不影響輸出畫面。"
-            : `裁切框鎖定 ${aspect}，因為首尾圖的比例決定輸出影片的畫面比例。`}
-          aspect={cropTarget.kind === "reference" ? undefined : CROP_ASPECT[aspect]}
+          hint={cropTarget.kind === "qwen"
+            ? "只留下要參考的部分。參考圖會被縮到設定的像素量，裁得越準細節越多；<image1> 裁完的比例也會決定輸出圖的比例。"
+            : cropTarget.kind === "reference"
+              ? "只留下要參考的部分，例如臉部。參考圖會被縮到與輸出畫面相同的像素量，所以裁得越準，臉的細節就越多。裁切比例不影響輸出畫面。"
+              : `裁切框鎖定 ${aspect}，因為首尾圖的比例決定輸出影片的畫面比例。`}
+          aspect={cropTarget.kind === "reference" || cropTarget.kind === "qwen" ? undefined : CROP_ASPECT[aspect]}
           onCancel={() => setCropTarget(null)}
           onApply={(rect) => void applyCrop(rect)}
         />
