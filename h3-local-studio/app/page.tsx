@@ -111,6 +111,7 @@ export default function Home() {
   const [qwenSeed, setQwenSeed] = useState("");
   const [qwenCount, setQwenCount] = useState(1);
   const [qwenCooldownSeconds, setQwenCooldownSeconds] = useState(QWEN_DEFAULT_COOLDOWN_SECONDS);
+  const [qwenFast, setQwenFast] = useState(false);
   const [qwenImages, setQwenImages] = useState<QwenImageDraft[]>([]);
   const nextQwenImageId = useRef(1);
   const qwenPromptRef = useRef<HTMLTextAreaElement>(null);
@@ -567,6 +568,7 @@ export default function Home() {
           seed: qwenSeed.trim() ? Number(qwenSeed) : undefined,
           cooldownSeconds: Math.max(QWEN_MIN_COOLDOWN_SECONDS, qwenCooldownSeconds),
           count: qwenCount,
+          fast: qwenFast,
         },
         qwenImages.map((image) => image.file),
         (phase) => setStatusText(phase),
@@ -797,6 +799,7 @@ export default function Home() {
     if (image.qwenAspect) setQwenAspect(image.qwenAspect);
     if (image.qwenSize) setQwenSize(image.qwenSize);
     if (image.steps) setQwenSteps(image.steps);
+    setQwenFast(image.qwenFast === true);
     if (typeof image.cooldownSeconds === "number") setQwenCooldownSeconds(Math.max(QWEN_MIN_COOLDOWN_SECONDS, image.cooldownSeconds));
     setQwenSeed(image.seed === undefined ? "" : String(image.seed));
     setError("");
@@ -1401,6 +1404,13 @@ export default function Home() {
                       aria-label="每步降溫秒數"
                     />
                   </label>
+                  <label>
+                    <span>加速</span>
+                    <select value={qwenFast ? "easycache" : "off"} onChange={(event) => setQwenFast(event.target.value === "easycache")} aria-label="EasyCache 加速">
+                      <option value="off">標準</option>
+                      <option value="easycache">EasyCache 快速</option>
+                    </select>
+                  </label>
                 </div>
 
                 <div className="generate-actions">
@@ -1414,7 +1424,8 @@ export default function Home() {
                 Qwen-Image 2.1 int8 · {qwenImages.length
                   ? `${qwenImages.length} 張參考圖 · 依 <image1> 比例，約 ${qwenSize === "2k" ? 2048 : 1024} 像素`
                   : `輸出 ${QWEN_DIMENSIONS[qwenSize][qwenAspect].join(" × ")}`}
-                <span> · {qwenSteps} 步 · 每步降溫 {qwenCooldownSeconds} 秒 ≈ {qwenCooldownSeconds * qwenSteps} 秒冷卻</span>
+                <span> · {qwenSteps} 步 · 每步降溫 {qwenCooldownSeconds} 秒 ≈ {qwenCooldownSeconds * Math.max(0, qwenSteps - 1)} 秒冷卻（最後一步不休息）</span>
+                {qwenFast && <span> · EasyCache 會跳過變化小的步數，較快但細節可能略軟</span>}
                 {qwenCooldownSeconds === 0 && <span> · 0 秒＝完全不降溫，長時間連跑請自行留意溫度</span>}
                 {qwenCount > 1 && <span> · {qwenCount} 張各自不同種子{qwenSeed.trim() ? `（${qwenSeed} 起連號）` : ""}，逐張生成</span>}
                 <span> · PNG 儲存到 ComfyUI/output/H3_Image</span>
@@ -1724,7 +1735,7 @@ function ImageGrid({ videos, onDelete, onRedo, onReuseSeed, emptyText }: ImageGr
                 <span title={image.filename}>{image.filename}</span>
                 {image.generationSeconds !== undefined && <small>耗時 {image.generationSeconds} 秒</small>}
                 {image.width && image.height ? <small>{image.width} × {image.height}</small> : null}
-                {image.model === "qwen-image-2.1" && <small>Qwen-Image 2.1{image.steps ? ` · ${image.steps} 步` : ""}</small>}
+                {image.model === "qwen-image-2.1" && <small>Qwen-Image 2.1{image.steps ? ` · ${image.steps} 步` : ""}{image.qwenFast ? " · EasyCache" : ""}</small>}
                 {image.seed !== undefined && (
                   <small className="seed-line">
                     種子 <code>{image.seed}</code>

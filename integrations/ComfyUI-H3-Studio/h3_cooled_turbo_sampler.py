@@ -9,7 +9,7 @@ COOLDOWN_START_STEP = 1
 COOLDOWN_SECONDS = 15
 
 
-def cooled_sampler(model, x, sigmas, extra_args=None, callback=None, disable=None, base_sampler=None, seconds=COOLDOWN_SECONDS, **_kwargs):
+def cooled_sampler(model, x, sigmas, extra_args=None, callback=None, disable=None, base_sampler=None, seconds=COOLDOWN_SECONDS, skip_last=False, **_kwargs):
     if base_sampler is None or not hasattr(base_sampler, "sampler_function"):
         raise ValueError("H3 Cooled Sampler requires a compatible base sampler")
 
@@ -21,6 +21,9 @@ def cooled_sampler(model, x, sigmas, extra_args=None, callback=None, disable=Non
 
         completed_step = int(state["i"]) + 1
         if completed_step < COOLDOWN_START_STEP:
+            return
+        # the last step hands straight to the VAE, so pausing there only delays the result
+        if skip_last and completed_step >= total_steps:
             return
 
         if x.device.type == "cuda":
@@ -48,7 +51,10 @@ class H3CooledTurboSampler:
     def INPUT_TYPES(cls):
         return {
             "required": {"sampler": ("SAMPLER",)},
-            "optional": {"seconds": ("INT", {"default": COOLDOWN_SECONDS, "min": 0, "max": 600})},
+            "optional": {
+                "seconds": ("INT", {"default": COOLDOWN_SECONDS, "min": 0, "max": 600}),
+                "skip_last": ("BOOLEAN", {"default": False, "tooltip": "Skip the pause after the final step."}),
+            },
         }
 
     RETURN_TYPES = ("SAMPLER",)
@@ -56,11 +62,11 @@ class H3CooledTurboSampler:
     CATEGORY = "H3 Local Studio"
     DESCRIPTION = "Pauses for `seconds` (default 15) after every Turbo step."
 
-    def wrap(self, sampler, seconds=COOLDOWN_SECONDS):
+    def wrap(self, sampler, seconds=COOLDOWN_SECONDS, skip_last=False):
         return (
             comfy.samplers.KSAMPLER(
                 cooled_sampler,
-                extra_options={"base_sampler": sampler, "seconds": seconds},
+                extra_options={"base_sampler": sampler, "seconds": seconds, "skip_last": skip_last},
                 inpaint_options=sampler.inpaint_options,
             ),
         )

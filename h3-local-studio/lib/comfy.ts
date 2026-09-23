@@ -41,6 +41,8 @@ export type GeneratedVideo = {
   steps?: number;
   qwenAspect?: QwenAspect;
   qwenSize?: QwenSize;
+  /** Qwen image sampled with EasyCache skipping near-duplicate steps. */
+  qwenFast?: boolean;
   cooldownSeconds?: number;
   generationSeconds?: number;
   seed?: number;
@@ -132,6 +134,8 @@ export type QwenImageOptions = {
   cooldownSeconds: number;
   /** Images per run; each one is its own prompt with its own seed. Omitted means 1. */
   count?: number;
+  /** EasyCache: reuse the previous step's output when the model barely changes it; faster, slightly softer. */
+  fast?: boolean;
 };
 
 /** Qwen steps run under a second, so 2 s keeps the GPU on a sawtooth instead of the 15 s H3 needs. 0 disables cooling entirely. */
@@ -438,6 +442,7 @@ export function buildImageWorkflow(options: GenerationOptions, uploadedReference
  * Qwen-Image 2.1, mirroring ComfyUI's t2i / image-edit templates. With
  * reference images the encoder also emits the latent (sized to the first
  * image at `resolution`) and the model runs behind the KV cache node.
+ * `fast` puts EasyCache in front of the sampler.
  */
 export function buildQwenImageWorkflow(options: QwenImageOptions, uploadedImages: string[] = []): PromptGraph {
   const [width, height] = QWEN_DIMENSIONS[options.size][options.aspect];
@@ -451,10 +456,10 @@ export function buildQwenImageWorkflow(options: QwenImageOptions, uploadedImages
       clip: ["2", 0], prompt: options.prompt, negative_prompt: "", resolution: options.size === "2k" ? 2048 : 1024, ...(editing ? { vae: ["3", 0] } : {}),
     }, "編碼提示與參考圖"),
     "6": node("KSamplerSelect", { sampler_name: "euler" }, "Euler"),
-    "7": node("H3CooledSampler", { sampler: ["6", 0], seconds: cooldown }, `每步休息 ${cooldown} 秒`),
+    "7": node("H3CooledSampler", { sampler: ["6", 0], seconds: cooldown, skip_last: true }, `每步休息 ${cooldown} 秒`),
     "8": node("BasicScheduler", { model: ["1", 0], scheduler: "simple", steps: options.steps, denoise: 1 }, "排程"),
     "9": node("SamplerCustom", {
-      model: editing ? ["12", 0] : ["1", 0], add_noise: true, noise_seed: options.seed ?? randomSeed(), cfg: 1,
+      model: options.fast ? ["13", 0] : editing ? ["12", 0] : ["1", 0], add_noise: true, noise_seed: options.seed ?? randomSeed(), cfg: 1,
       positive: ["4", 0], negative: ["4", 1], sampler: ["7", 0], sigmas: ["8", 0], latent_image: editing ? ["4", 2] : ["5", 0],
     }, "Qwen 採樣"),
     "10": node("VAEDecode", { samples: ["9", 0], vae: ["3", 0] }, "解碼影像"),
@@ -469,6 +474,11 @@ export function buildQwenImageWorkflow(options: QwenImageOptions, uploadedImages
     });
   } else {
     graph["5"] = node("EmptyLatentImage", { width, height, batch_size: 1 }, "空白畫布");
+  }
+  if (options.fast) {
+    graph["13"] = node("EasyCache", {
+      model: editing ? ["12", 0] : ["1", 0], reuse_threshold: 0.2, start_percent: 0.15, end_percent: 0.95, verbose: false,
+    }, "EasyCache 加速");
   }
   return graph;
 }
@@ -963,6 +973,7 @@ async function runQwenPrompt(options: QwenImageOptions, uploadedImages: string[]
     steps: options.steps,
     qwenAspect: options.aspect,
     qwenSize: options.size,
+    ...(options.fast ? { qwenFast: true } : {}),
     seed,
     cooldownSeconds: Math.max(QWEN_MIN_COOLDOWN_SECONDS, options.cooldownSeconds),
     generationSeconds: segment.generationSeconds ?? Math.max(1, Math.round((Date.now() - startedAt) / 1000)),

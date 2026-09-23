@@ -131,6 +131,8 @@ def validated_metadata(data):
             metadata["qwenAspect"] = data["qwenAspect"]
         if data.get("qwenSize") in {"1mp", "2k"}:
             metadata["qwenSize"] = data["qwenSize"]
+        if data.get("qwenFast") is True:
+            metadata["qwenFast"] = True
         qwen_references = data.get("referenceFiles")
         if isinstance(qwen_references, list) and 1 <= len(qwen_references) <= 16:
             normalized_references = []
