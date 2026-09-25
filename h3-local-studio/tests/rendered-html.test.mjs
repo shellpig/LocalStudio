@@ -167,9 +167,34 @@ test("adds a low-VRAM profile and a 540P step between 480P and native", async ()
   assert.match(page, /低顯存 · Turbo 6 步／LoRA merge/);
   assert.match(page, /低顯存 · Turbo 8 步／LoRA merge/);
   assert.match(page, /\{sizeLabels\.p540\} · 540P/);
-  assert.match(comfy, /p540: \{ "16:9": \[960, 544\], "9:16": \[544, 960\], "1:1": \[736, 736\] \}/);
+  assert.match(comfy, /p540: \{ "16:9": \[960, 544\].*"1:1": \[736, 736\].*"9:16": \[544, 960\] \}/);
   assert.match(comfy, /p540: 960 \* 544/);
   assert.match(api, /"quality", "safe-long", "low-vram"/);
+});
+
+test("offers five Ref2VA aspect ratios and passes their dimensions to the workflow", async () => {
+  const [{ buildReferenceWorkflow, resolveImageDimensions, resolveOutputDimensions }, page, api] = await Promise.all([
+    import(new URL("../lib/comfy.ts", import.meta.url)),
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../../integrations/ComfyUI-H3-Studio/h3_studio_api.py", import.meta.url), "utf8"),
+  ]);
+
+  const cases = [
+    ["16:9", [960, 544]], ["4:3", [832, 640]], ["1:1", [736, 736]],
+    ["3:4", [640, 832]], ["9:16", [544, 960]],
+  ];
+  for (const [aspect, expected] of cases) {
+    assert.deepEqual(resolveOutputDimensions({ resolution: "p540", aspect }), expected);
+    const graph = buildReferenceWorkflow({
+      prompt: "detailed_description:\nA quiet street.", profile: "cooled-turbo-8", resolution: "p540",
+      inputMode: "reference", duration: 5, aspect, sound: true,
+    }, ["reference-one.png"]);
+    assert.deepEqual([graph["104"].inputs.width, graph["104"].inputs.height], expected);
+    assert.match(page, new RegExp(`<option value="${aspect}">`));
+  }
+  assert.deepEqual(resolveImageDimensions("4:3"), [2048, 1536]);
+  assert.deepEqual(resolveImageDimensions("3:4"), [1536, 2048]);
+  assert.match(api, /"16:9", "4:3", "1:1", "3:4", "9:16"/);
 });
 
 test("builds Ref2VA continuation from the previous final frame and original references", async () => {

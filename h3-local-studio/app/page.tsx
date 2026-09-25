@@ -15,6 +15,7 @@ import {
   getRecentVideos,
   inputImageUrl,
   MIN_COOLDOWN_SECONDS,
+  optimizeQwenImagePrompt,
   optimizeVideoPrompt,
   outputUrl,
   PromptEngine,
@@ -27,6 +28,7 @@ import {
   QwenAspect,
   QwenSize,
   ReferenceImageInput,
+  resolveImageDimensions,
   resolveOutputDimensions,
 } from "@/lib/comfy";
 import { CropRect, cropImageFile, ImageCropper, readImageDimensions } from "./image-cropper";
@@ -56,7 +58,7 @@ type QwenImageDraft = {
 };
 type CropTarget = { kind: "first" } | { kind: "last" } | { kind: "reference"; id: number } | { kind: "qwen"; id: number };
 
-const CROP_ASPECT: Record<GenerationOptions["aspect"], number> = { "16:9": 16 / 9, "9:16": 9 / 16, "1:1": 1 };
+const CROP_ASPECT: Record<GenerationOptions["aspect"], number> = { "16:9": 16 / 9, "4:3": 4 / 3, "1:1": 1, "3:4": 3 / 4, "9:16": 9 / 16 };
 
 const EXAMPLE_PROMPT =
   "電影感寫實風格，雨後黃昏的台北街道，一位穿深色風衣的人緩慢走過霓虹燈下，鏡頭低角度向前跟拍，水面倒影細緻，微風吹動衣角。環境音：細雨、遠方車流、輕柔低沉的配樂。不要文字、字幕、Logo 或浮水印。";
@@ -112,6 +114,7 @@ export default function Home() {
   const promptHighlightRef = useRef<HTMLDivElement>(null);
   // 圖像編輯 (Qwen-Image 2.1) keeps its own settings; nothing here touches the H3 pipeline.
   const [qwenPrompt, setQwenPrompt] = useState("");
+  const [qwenPromptBeforeOptimization, setQwenPromptBeforeOptimization] = useState<string | null>(null);
   const [qwenAspect, setQwenAspect] = useState<QwenAspect>("1:1");
   const [qwenSize, setQwenSize] = useState<QwenSize>("1mp");
   const [qwenSteps, setQwenSteps] = useState(QWEN_DEFAULT_STEPS);
@@ -295,6 +298,7 @@ export default function Home() {
       return;
     }
     if (target.kind === "qwen") {
+      setQwenPromptBeforeOptimization(null);
       setQwenImages((images) => images.map((image) => {
         if (image.id !== target.id) return image;
         URL.revokeObjectURL(image.preview);
@@ -507,6 +511,7 @@ export default function Home() {
   function chooseQwenImages(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
     event.target.value = "";
+    setQwenPromptBeforeOptimization(null);
     setQwenImages((current) => [
       ...current,
       ...files.slice(0, Math.max(0, QWEN_MAX_IMAGES - current.length)).map((file) => ({
@@ -516,6 +521,7 @@ export default function Home() {
   }
 
   function removeQwenImage(id: number) {
+    setQwenPromptBeforeOptimization(null);
     setQwenImages((current) => {
       const target = current.find((image) => image.id === id);
       if (target) URL.revokeObjectURL(target.preview);
@@ -546,6 +552,7 @@ export default function Home() {
     if (!field || !qwenMention) return;
     const tag = `<image${index + 1}>`;
     setQwenPrompt(`${field.value.slice(0, qwenMention.start)}${tag}${field.value.slice(field.selectionStart)}`);
+    setQwenPromptBeforeOptimization(null);
     setQwenMention(null);
     const caret = qwenMention.start + tag.length;
     window.requestAnimationFrame(() => {
@@ -601,6 +608,33 @@ export default function Home() {
       setIsGenerating(false);
       void refreshHistory();
     }
+  }
+
+  async function optimizeQwenPrompt() {
+    if (!qwenPrompt.trim()) {
+      setError(qwenImages.length ? "請先描述要怎麼編輯這些圖片。 " : "請先輸入想生成的圖像內容。 ");
+      return;
+    }
+    setError("");
+    setQwenMention(null);
+    setIsOptimizing(true);
+    try {
+      const original = qwenPrompt;
+      const result = await optimizeQwenImagePrompt(original.trim(), qwenImages.map((image) => image.file));
+      setQwenPromptBeforeOptimization(original);
+      setQwenPrompt(result.prompt);
+      setQwenMention(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Codex 無法優化提示詞，請稍後再試。 ");
+    } finally {
+      setIsOptimizing(false);
+    }
+  }
+
+  function restoreQwenPrompt() {
+    if (qwenPromptBeforeOptimization === null) return;
+    setQwenPrompt(qwenPromptBeforeOptimization);
+    setQwenPromptBeforeOptimization(null);
   }
 
   async function optimizePrompt() {
@@ -817,6 +851,7 @@ export default function Home() {
       ? [{ id: nextQwenImageId.current++, file: item.file, originalFile: item.file, crop: null, preview: item.preview }]
       : [])));
     setQwenPrompt(image.prompt);
+    setQwenPromptBeforeOptimization(null);
     if (image.qwenAspect) setQwenAspect(image.qwenAspect);
     if (image.qwenSize) setQwenSize(image.qwenSize);
     if (image.steps) setQwenSteps(image.steps);
@@ -842,8 +877,9 @@ export default function Home() {
       setProfile("cooled-turbo-8");
       setResolution("native");
       setAspect("16:9");
-    } else if (resolution === "native") {
-      setResolution("safe");
+    } else {
+      if (resolution === "native") setResolution("safe");
+      if (aspect === "4:3" || aspect === "3:4") setAspect("16:9");
     }
   }
 
@@ -1199,7 +1235,13 @@ export default function Home() {
                         <option value="auto">依照圖片{imageAspect ? ` · ${imageAspect}` : ""}</option>
                       </select>
                     ) : sourceMode === "reference" ? (
-                      <select value="16:9" disabled><option value="16:9">16:9 橫向 · 固定</option></select>
+                      <select value={aspect} onChange={(event) => setAspect(event.target.value as GenerationOptions["aspect"])}>
+                        <option value="16:9">16:9 橫向</option>
+                        <option value="4:3">4:3 橫向</option>
+                        <option value="1:1">1:1 方形</option>
+                        <option value="3:4">3:4 直向</option>
+                        <option value="9:16">9:16 直向</option>
+                      </select>
                     ) : (
                       <select value={aspect} onChange={(event) => setAspect(event.target.value as GenerationOptions["aspect"])}>
                         <option value="16:9">16:9 橫向</option>
@@ -1266,7 +1308,7 @@ export default function Home() {
                 {profile === "low-vram" && <span> · Turbo LoRA 改用 merge 模式，省下採樣時最大的一筆顯存配置；長片較不易爆顯存，畫面略柔</span>}
                 {resolution !== "safe" && <span> · 較高解析度的顯存與時間需求較高</span>}
                 {extremeImageRatio && <span> · 極端圖片比例可能降低生成品質</span>}
-                {sourceMode !== "image" && <span> · 「生成圖片」忽略秒數與聲音，輸出 2K PNG（{aspect === "16:9" ? "2048×1152" : aspect === "9:16" ? "1152×2048" : "1440×1440"}）</span>}
+                {sourceMode !== "image" && <span> · 「生成圖片」忽略秒數與聲音，輸出 2K PNG（{resolveImageDimensions(aspect).join("×")}）</span>}
               </div>
             </section>
 
@@ -1303,15 +1345,16 @@ export default function Home() {
                       <span>&lt;image{index + 1}&gt;</span>
                       <CropActions
                         hasCrop={Boolean(image.crop)}
+                        disabled={isOptimizing}
                         onCrop={() => setCropTarget({ kind: "qwen", id: image.id })}
                         onRestore={() => void restoreOriginalImage({ kind: "qwen", id: image.id })}
                       />
-                      <button type="button" onClick={() => removeQwenImage(image.id)}>移除</button>
+                      <button type="button" onClick={() => removeQwenImage(image.id)} disabled={isOptimizing}>移除</button>
                     </div>
                   ))}
                   {qwenImages.length < QWEN_MAX_IMAGES && (
                     <label className="image-dropzone qwen-image-slot" htmlFor="qwen-image-upload">
-                      <input id="qwen-image-upload" type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={chooseQwenImages} />
+                      <input id="qwen-image-upload" type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={chooseQwenImages} disabled={isOptimizing} />
                       <span className="upload-icon">＋</span>
                       <strong>加入圖片</strong>
                       <small>選填 · 最多 {QWEN_MAX_IMAGES} 張</small>
@@ -1326,12 +1369,14 @@ export default function Home() {
                   value={qwenPrompt}
                   onChange={(event) => {
                     setQwenPrompt(event.target.value);
+                    setQwenPromptBeforeOptimization(null);
                     syncQwenMention(event.target);
                   }}
                   onKeyUp={(event) => syncQwenMention(event.currentTarget)}
                   onClick={(event) => syncQwenMention(event.currentTarget)}
                   onKeyDown={handleQwenPromptKeys}
                   onBlur={() => setQwenMention(null)}
+                  disabled={isOptimizing}
                   placeholder={qwenImages.length
                     ? "例如：保留 <image1> 的人物、五官與姿勢，把 <image2> 的淺藍色丹寧襯衫穿到人物身上，衣服自然貼合，維持原本背景與光線。"
                     : "例如：雨後黃昏的台北街道，霓虹招牌上寫著「夜市」兩個字，一位穿深色風衣的人走過，水面倒影細緻，電影感寫實風格。"}
@@ -1359,6 +1404,25 @@ export default function Home() {
                     ))}
                   </ul>
                 )}
+                <div className="prompt-tools qwen-prompt-tools">
+                  <div>
+                    <button
+                      className="prompt-optimize-button"
+                      onClick={optimizeQwenPrompt}
+                      disabled={!connected || isGenerating || isOptimizing}
+                    >
+                      <span>✦</span>{isOptimizing ? "Codex 正在優化…" : "優化提示詞"}
+                    </button>
+                    {qwenPromptBeforeOptimization !== null && (
+                      <button className="prompt-restore-button" onClick={restoreQwenPrompt} disabled={isGenerating || isOptimizing}>還原原文</button>
+                    )}
+                  </div>
+                  <small>
+                    {qwenPromptBeforeOptimization !== null
+                      ? "已填入優化結果，請確認內容後再生成。"
+                      : "Codex CLI 使用 gpt-6-sol（推理強度 low），依照原意整理並保留 &lt;imageN&gt; 標記。"}
+                  </small>
+                </div>
               </div>
 
               <div className="composer-footer">
@@ -1442,7 +1506,7 @@ export default function Home() {
                 </div>
 
                 <div className="generate-actions">
-                  <button className="generate-button" onClick={generateQwenImage} disabled={!connected || isGenerating}>
+                  <button className="generate-button" onClick={generateQwenImage} disabled={!connected || isGenerating || isOptimizing}>
                     <span>✦</span>{isGenerating ? "生成中" : qwenImages.length ? "編輯圖像" : "生成圖像"}
                   </button>
                 </div>
@@ -1518,7 +1582,7 @@ export default function Home() {
   );
 }
 
-function CropActions({ hasCrop, onCrop, onRestore }: { hasCrop: boolean; onCrop: () => void; onRestore: () => void }) {
+function CropActions({ hasCrop, onCrop, onRestore, disabled = false }: { hasCrop: boolean; onCrop: () => void; onRestore: () => void; disabled?: boolean }) {
   // The thumbnail is a <label> for the file input, so a plain click here would
   // also reopen the file picker.
   function intercept(action: () => void) {
@@ -1531,8 +1595,8 @@ function CropActions({ hasCrop, onCrop, onRestore }: { hasCrop: boolean; onCrop:
 
   return (
     <span className="crop-actions">
-      <button type="button" onClick={intercept(onCrop)}>{hasCrop ? "重新裁切" : "裁切"}</button>
-      {hasCrop && <button type="button" onClick={intercept(onRestore)}>還原原圖</button>}
+      <button type="button" onClick={intercept(onCrop)} disabled={disabled}>{hasCrop ? "重新裁切" : "裁切"}</button>
+      {hasCrop && <button type="button" onClick={intercept(onRestore)} disabled={disabled}>還原原圖</button>}
     </span>
   );
 }
@@ -1569,7 +1633,7 @@ function highlightReferenceTags(value: string, tags: string[]) {
 function aspectFromDimensions(width?: number, height?: number): GenerationOptions["aspect"] {
   if (!width || !height) return "16:9";
   const ratio = width / height;
-  const candidates: Array<[GenerationOptions["aspect"], number]> = [["16:9", 16 / 9], ["9:16", 9 / 16], ["1:1", 1]];
+  const candidates: Array<[GenerationOptions["aspect"], number]> = [["16:9", 16 / 9], ["4:3", 4 / 3], ["1:1", 1], ["3:4", 3 / 4], ["9:16", 9 / 16]];
   return candidates.reduce((best, candidate) =>
     Math.abs(candidate[1] - ratio) < Math.abs(best[1] - ratio) ? candidate : best,
   )[0];

@@ -14,7 +14,7 @@ export type GenerationOptions = {
   /** Seconds paused after every sampling step to keep the laptop from overheating (min 15). */
   cooldownSeconds?: number;
   duration: number;
-  aspect: "16:9" | "9:16" | "1:1";
+  aspect: "16:9" | "4:3" | "1:1" | "3:4" | "9:16";
   /** Reuse an exact seed. Omitted means a fresh random one. */
   seed?: number;
   /** LoRAs stacked after the Turbo LoRA, applied in order. */
@@ -93,11 +93,11 @@ export type ReferenceImageInput = {
 export type ReferenceDefinition = Pick<ReferenceImageInput, "label" | "description">;
 
 const DIMENSIONS = {
-  safe: { "16:9": [608, 352], "9:16": [352, 608], "1:1": [448, 448] },
-  clear: { "16:9": [736, 416], "9:16": [416, 736], "1:1": [544, 544] },
-  p480: { "16:9": [864, 480], "9:16": [480, 864], "1:1": [640, 640] },
-  p540: { "16:9": [960, 544], "9:16": [544, 960], "1:1": [736, 736] },
-  native: { "16:9": [1344, 768], "9:16": [768, 1344], "1:1": [1024, 1024] },
+  safe: { "16:9": [608, 352], "4:3": [512, 384], "1:1": [448, 448], "3:4": [384, 512], "9:16": [352, 608] },
+  clear: { "16:9": [736, 416], "4:3": [640, 480], "1:1": [544, 544], "3:4": [480, 640], "9:16": [416, 736] },
+  p480: { "16:9": [864, 480], "4:3": [736, 544], "1:1": [640, 640], "3:4": [544, 736], "9:16": [480, 864] },
+  p540: { "16:9": [960, 544], "4:3": [832, 640], "1:1": [736, 736], "3:4": [640, 832], "9:16": [544, 960] },
+  native: { "16:9": [1344, 768], "4:3": [1152, 864], "1:1": [1024, 1024], "3:4": [864, 1152], "9:16": [768, 1344] },
 } as const;
 
 const TARGET_PIXELS = {
@@ -110,6 +110,8 @@ const TARGET_PIXELS = {
 
 const SAFE_LONG_DIMENSIONS = {
   "16:9": [640, 352],
+  "4:3": [544, 416],
+  "3:4": [416, 544],
   "9:16": [352, 640],
   "1:1": [480, 480],
 } as const;
@@ -117,6 +119,8 @@ const SAFE_LONG_DIMENSIONS = {
 /** Fixed 2K canvases for the image pipeline (each axis a multiple of 32). */
 const IMAGE_DIMENSIONS = {
   "16:9": [2048, 1152],
+  "4:3": [2048, 1536],
+  "3:4": [1536, 2048],
   "9:16": [1152, 2048],
   "1:1": [1440, 1440],
 } as const;
@@ -138,9 +142,9 @@ export type QwenImageOptions = {
   fast?: boolean;
 };
 
-/** Qwen steps run under a second, so 2 s keeps the GPU on a sawtooth instead of the 15 s H3 needs. 0 disables cooling entirely. */
+/** Qwen cooling can be disabled with 0 seconds. */
 export const QWEN_MIN_COOLDOWN_SECONDS = 0;
-export const QWEN_DEFAULT_COOLDOWN_SECONDS = 2;
+export const QWEN_DEFAULT_COOLDOWN_SECONDS = 0;
 export const QWEN_DEFAULT_STEPS = 25;
 export const QWEN_MAX_IMAGES = 4;
 export const QWEN_MAX_COUNT = 4;
@@ -546,6 +550,14 @@ export async function optimizeVideoPrompt(
   return await response.json() as OptimizedPrompt;
 }
 
+export async function optimizeQwenImagePrompt(prompt: string, images: File[] = []) {
+  const data = new FormData();
+  data.append("prompt", prompt);
+  images.forEach((file, index) => data.append(`qwen_image_${index + 1}`, file, file.name));
+  const response = await request("/h3-studio/optimize-image-prompt", { method: "POST", body: data });
+  return await response.json() as { prompt: string };
+}
+
 function referenceDefinitionsFromPrompt(prompt: string, count: number): ReferenceDefinition[] {
   const definitions = new Map<number, ReferenceDefinition>();
   const pattern = /^<Subject (\d+)> is the referenced content labeled @([^\s]+) from <Picture \1>\.(.*)$/gm;
@@ -613,7 +625,7 @@ function linkedInputImage(graph: PromptGraph, setup: GraphNode, input: "first_fr
 function inferAspect(width: unknown, height: unknown): GenerationOptions["aspect"] | undefined {
   if (typeof width !== "number" || typeof height !== "number" || width <= 0 || height <= 0) return undefined;
   const ratio = width / height;
-  const candidates: Array<[GenerationOptions["aspect"], number]> = [["16:9", 16 / 9], ["9:16", 9 / 16], ["1:1", 1]];
+  const candidates: Array<[GenerationOptions["aspect"], number]> = [["16:9", 16 / 9], ["4:3", 4 / 3], ["1:1", 1], ["3:4", 3 / 4], ["9:16", 9 / 16]];
   return candidates.reduce((best, candidate) =>
     Math.abs(candidate[1] - ratio) < Math.abs(best[1] - ratio) ? candidate : best,
   )[0];

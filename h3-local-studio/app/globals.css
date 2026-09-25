@@ -81,6 +81,9 @@ button { color: inherit; }
 .engine-switch button { border: 0; border-radius: 0; background: transparent; color: #7f8290; padding: 8px 12px; }
 .engine-switch button.active { background: #211b35; color: #c7b7ff; }
 .prompt-tools small { color: #686a76; text-align: right; }
+.qwen-prompt-tools { align-items: flex-start; }
+.qwen-prompt-tools > div { flex-wrap: wrap; }
+.qwen-prompt-tools small { flex: 1; }
 .continuation-banner { position: relative; padding: 16px 130px 15px 22px; border-bottom: 1px solid #3b315d; background: rgba(118,82,255,.11); }
 .continuation-banner div { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .continuation-banner strong { color: #d8ceff; font-size: 13px; }
@@ -104,6 +107,7 @@ button { color: inherit; }
 .qwen-image-slot > span:not(.crop-actions) { position: absolute; left: 10px; top: 10px; background: rgba(8,9,13,.86); padding: 5px 8px; border-radius: 7px; font-size: 11px; color: #b7a5ff; }
 .qwen-image-slot > button { position: absolute; right: 10px; bottom: 10px; border: 1px solid #3d3d4b; background: rgba(8,9,13,.86); color: #c8c9d2; padding: 6px 10px; border-radius: 7px; font-size: 11px; cursor: pointer; }
 .qwen-image-slot > button:hover { border-color: #ff6b6b; color: #ff9b9b; }
+.qwen-image-slot > button:disabled { opacity: .45; cursor: not-allowed; }
 .qwen-image-slot .crop-actions button { padding: 6px 10px; color: #c8c9d2; }
 .image-dropzone small { color: var(--muted); }
 .reference-upload-section { margin: 18px 24px 0; }
