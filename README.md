@@ -1,6 +1,6 @@
 # H3 Local Studio
 
-Windows 本機版 MiniMax H3 影片製作介面。前端是一個網頁介面，實際生成交給本機的 ComfyUI 執行，全程不經過雲端。
+Windows 本機版 MiniMax H3 影片製作介面。前端是一個網頁介面，實際生成交給本機的 ComfyUI 執行，全程不經過雲端。唯一的例外是可選的「語音生成」頁，它會把文字送到 Google Gemini API。
 
 ## 功能
 
@@ -10,6 +10,7 @@ Windows 本機版 MiniMax H3 影片製作介面。前端是一個網頁介面，
 - 影片延伸：沿用原本的人物與場景，接續前一段的最後畫面，裁掉重疊幀後合併
 - 官方 H3 Prompt 優化：把一句白話描述改寫成 MiniMax 官方格式，可選 Codex 或 Grok 執行
 - 圖像編輯（Qwen-Image 2.1）：文字生圖，或上傳最多 4 張圖後用一句指令編輯，支援 7 種比例與 2K
+- 語音生成（Gemini 3.8 TTS，雲端，可選）：文字轉 WAV，30 個預設聲線加上可搜尋、試聽的 Google 聲線庫
 - 作品列表、刪除、下載，並保存生成設定 metadata
 
 ---
@@ -27,6 +28,7 @@ Windows 本機版 MiniMax H3 影片製作介面。前端是一個網頁介面，
 | `h3-local-studio/node_modules` | 約 300 MB | 由 `npm install` 產生 |
 | FFmpeg | 約 150 MB | 系統層工具 |
 | Codex 或 Grok CLI | 小 | 需個人帳號登入 |
+| Gemini API 金鑰 | — | 個人憑證，只放在環境變數（見步驟 11） |
 | `h3-prompt-writing` skill | 小 | **內容來自 MiniMax 官方文件，授權不同，需自行取得**（見步驟 10） |
 
 倉庫本身只有：Studio 前端原始碼、ComfyUI 整合節點、五個 workflow JSON、啟動腳本與文件。
@@ -154,7 +156,7 @@ Get-Item ".\ComfyUI\custom_nodes\ComfyUI-H3-Studio" -Force | Select-Object LinkT
 
 `LinkType` 應為 `Junction`，`Target` 應指向 `integrations\ComfyUI-H3-Studio`。
 
-**跳過這一步的後果：** ComfyUI 不會註冊七組 `/h3-studio/*` API 路由，也不會有 `H3CooledSampler` 與 `H3CooledTurboSampler` 兩個節點。Studio 介面會顯示連線正常，但作品列表是空的、優化按鈕會失敗、生成會因為找不到節點而中斷。
+**跳過這一步的後果：** ComfyUI 不會註冊十二組 `/h3-studio/*` API 路由，也不會有 `H3CooledSampler` 與 `H3CooledTurboSampler` 兩個節點。Studio 介面會顯示連線正常，但作品列表是空的、優化按鈕會失敗、生成會因為找不到節點而中斷。
 
 ## 步驟 7：下載模型
 
@@ -339,6 +341,23 @@ skill 取別的名字時，把這兩處的 `$h3-prompt-writing` 換成你的名�
 
 另外，第 270 行的指令文字也重述了 Ref2VA 的六個欄位順序。改欄位時三處要一起改，否則指令與驗證會互相矛盾。
 
+## 步驟 11：Gemini TTS 金鑰（可選）
+
+只有「語音生成」頁會用到。不設定的話其他功能都正常，語音生成頁會顯示「尚未設定 API 金鑰」並停用生成按鈕。
+
+1. 到 Google AI Studio 建立 API 金鑰：<https://aistudio.google.com/apikey>。語音生成依 Gemini API 用量計費。
+2. 設成 Windows **使用者**環境變數 `GEMINI_TTS_API_KEY`：
+
+   ```powershell
+   [Environment]::SetEnvironmentVariable("GEMINI_TTS_API_KEY", "<你的金鑰>", "User")
+   ```
+
+3. **重新啟動 ComfyUI**。金鑰由 ComfyUI 在執行時讀取，已經在跑的 ComfyUI 看不到新設定的變數。先執行 `stop_h3_studio.bat`，再從新開的終端機或檔案總管執行 `start_h3_studio.bat`。
+
+金鑰只存在環境變數，不會寫進倉庫、設定檔或送到瀏覽器；介面只會拿到「有沒有設定」。
+
+驗證：開啟介面的「語音生成」頁，上方應顯示「API 金鑰已設定」。
+
 ---
 
 # 啟動與停止
@@ -408,6 +427,31 @@ Invoke-RestMethod 'http://127.0.0.1:8188/h3-studio/outputs'
 
 ---
 
+# 語音生成（Gemini TTS）
+
+在雲端執行，不佔本機 GPU。需要先完成步驟 11。
+
+| 項目 | 說明 |
+|---|---|
+| 模型 | Gemini 3.8 Flash TTS（表演較細膩）、Gemini 3.8 Flash-Lite TTS（較快） |
+| 文字長度 | 每次最多 6,000 字元；模型單次輸入上限為 8,192 tokens，較長內容請自行分段 |
+| 語氣與表達方式 | 選填，最多 500 字元，例如「自然親切，語速稍慢」 |
+| 輸出 | WAV，存在 `ComfyUI\output\H3_Audio\`，同時出現在作品頁的「聲音」分類，可試聽、下載、刪除 |
+
+**聲線**
+
+- **預設聲線**：下拉選單裡的 30 個 Gemini 預設聲線。按旁邊的「試聽」會用目前選的模型念一句英文固定短句。
+- **聲線庫**：可用關鍵字、語言代碼（例如 `en-US`、`zh-TW`）與性別搜尋 Google 提供的全部預設聲線，每頁 50 個。每個聲線都能試聽；試聽時該列會變成播放器並自動播放，按「選用」就會套用到下拉選單。
+- 聲線 ID 一律是小寫（例如 `kore`），與 Gemini 聲線清單 API 回傳的格式一致。
+
+**試聽的費用與快取**
+
+試聽也會呼叫 Gemini API，會用到額度。試聽只念一句依聲線語言選擇的短句，預覽**不會**加入作品。
+
+同一組「模型 + 聲線 + 語言」只會真正呼叫一次，結果快取在 `ComfyUI\temp\h3_tts_preview_cache\`，之後重播不再計費。下拉選單與聲線庫試聽同一個預設聲線時共用同一份快取。要強制重新生成，刪除這個資料夾即可。
+
+---
+
 # 目錄配置
 
 ```text
@@ -415,11 +459,13 @@ MinimaxH3/                          ← Git 倉庫根目錄
 ├─ h3-local-studio/                 ← Studio 前端（唯一一份原始碼）
 │  ├─ app/                          ← 介面
 │  ├─ lib/comfy.ts                  ← 工作流建構與 ComfyUI API 呼叫
+│  ├─ lib/tts.ts                    ← 語音生成 API 呼叫與預設聲線清單
 │  └─ tests/
 ├─ integrations/
 │  └─ ComfyUI-H3-Studio/            ← Studio 自有的 ComfyUI 節點
 │     ├─ __init__.py
-│     ├─ h3_studio_api.py           ← 七組 /h3-studio/* API 路由
+│     ├─ h3_studio_api.py           ← 十二組 /h3-studio/* API 路由
+│     ├─ h3_studio_tts.py           ← Gemini TTS 請求、驗證與試聽快取
 │     ├─ h3_cooled_turbo_sampler.py ← 兩個降溫用採樣節點
 │     └─ h3_prompt_output_schema.json
 ├─ workflows/                       ← 五個 12GB 顯存 workflow JSON
@@ -482,6 +528,15 @@ CLI 帳號額度用盡。Grok 免費層級額度很小，需要 SuperGrok 或 X 
 
 **Prompt 優化回「did not return the official H3 prompt structure」**
 模型這次沒有照官方格式輸出，屬於間歇性狀況，再按一次通常就好。Ref2VA 模式要求六個欄位，比其他模式容易失敗。
+
+**語音生成頁顯示「尚未設定 API 金鑰」，但已經設過環境變數**
+ComfyUI 是在設定變數之前啟動的。執行 `stop_h3_studio.bat` 後，從新開的終端機或檔案總管重新執行 `start_h3_studio.bat`。
+
+**語音生成或試聽回「Gemini API 額度已用完或請求過多」**
+Gemini API 回 HTTP 429。等一段時間再試，或到 Google AI Studio 檢查帳號的用量與計費設定。
+
+**語音生成回「Gemini API 無法接受這次語音設定」**
+通常是文字超過模型單次輸入上限（8,192 tokens），請分段生成。
 
 **ComfyUI 主控台出現 `ConnectionResetError: [WinError 10054]`**
 無害。介面每 5 秒輪詢一次 ComfyUI，逾時後主動關閉連線就會印出這個 traceback，不影響生成。

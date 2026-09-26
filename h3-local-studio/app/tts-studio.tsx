@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { SyntheticEvent, useEffect, useRef, useState } from "react";
 import { outputUrl } from "@/lib/comfy";
 import {
   audioDownloadUrl,
@@ -20,7 +20,7 @@ const MAX_TEXT_CHARS = 6000;
 export default function TtsStudio({ onGenerated }: { onGenerated: (audio: GeneratedAudio) => void }) {
   const [keyStatus, setKeyStatus] = useState<KeyStatus>("checking");
   const [model, setModel] = useState<GeminiTtsModel>("gemini-3.8-flash-tts");
-  const [voice, setVoice] = useState<string>("Kore");
+  const [voice, setVoice] = useState<string>("kore");
   const [extendedVoice, setExtendedVoice] = useState<GeminiVoice | null>(null);
   const [text, setText] = useState("");
   const [style, setStyle] = useState("");
@@ -36,6 +36,9 @@ export default function TtsStudio({ onGenerated }: { onGenerated: (audio: Genera
   const [voiceLibraryError, setVoiceLibraryError] = useState("");
   const [previewingVoiceId, setPreviewingVoiceId] = useState("");
   const [previewAudio, setPreviewAudio] = useState<{ url: string; voice: GeminiVoice } | null>(null);
+  const [isPreviewingSelectedVoice, setIsPreviewingSelectedVoice] = useState(false);
+  const [selectedVoicePreview, setSelectedVoicePreview] = useState<{ url: string; model: GeminiTtsModel; voice: string } | null>(null);
+  const selectedVoicePreviewUrlRef = useRef<string | null>(null);
   const previewAudioUrlRef = useRef<string | null>(null);
   const previewRequestIdRef = useRef(0);
   const voiceListRequestIdRef = useRef(0);
@@ -89,6 +92,7 @@ export default function TtsStudio({ onGenerated }: { onGenerated: (audio: Genera
   useEffect(() => () => {
     previewRequestIdRef.current += 1;
     if (previewAudioUrlRef.current) URL.revokeObjectURL(previewAudioUrlRef.current);
+    if (selectedVoicePreviewUrlRef.current) URL.revokeObjectURL(selectedVoicePreviewUrlRef.current);
   }, []);
 
   async function refreshKeyStatus() {
@@ -112,6 +116,25 @@ export default function TtsStudio({ onGenerated }: { onGenerated: (audio: Genera
       setError(caught instanceof Error ? caught.message : "語音生成失敗，請稍後再試。 ");
     } finally {
       setIsGenerating(false);
+    }
+  }
+
+  async function previewSelectedVoice() {
+    const previewModel = model;
+    const previewVoice = voice;
+    setError("");
+    setIsPreviewingSelectedVoice(true);
+    try {
+      // Preset voices are listed as en-US in the voice library, so both previews share one cache entry.
+      const audio = await previewGeminiTtsVoice({ model: previewModel, voice: previewVoice, languageCode: extendedVoice?.languageCode ?? "en-US" });
+      const url = URL.createObjectURL(audio);
+      if (selectedVoicePreviewUrlRef.current) URL.revokeObjectURL(selectedVoicePreviewUrlRef.current);
+      selectedVoicePreviewUrlRef.current = url;
+      setSelectedVoicePreview({ url, model: previewModel, voice: previewVoice });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "聲線試聽失敗，請稍後再試。 ");
+    } finally {
+      setIsPreviewingSelectedVoice(false);
     }
   }
 
@@ -180,6 +203,13 @@ export default function TtsStudio({ onGenerated }: { onGenerated: (audio: Genera
     }
   }
 
+  function pauseOtherPreviewAudio(event: SyntheticEvent<HTMLAudioElement>) {
+    const current = event.currentTarget;
+    current.closest(".tts-voice-dialog")?.querySelectorAll("audio").forEach((audio) => {
+      if (audio !== current) audio.pause();
+    });
+  }
+
   function selectExtendedVoice(item: GeminiVoice) {
     setVoice(item.id);
     setExtendedVoice(item);
@@ -242,9 +272,18 @@ export default function TtsStudio({ onGenerated }: { onGenerated: (audio: Genera
                   <option value={extendedVoice.id}>{extendedVoice.displayName} · {extendedVoice.id}</option>
                 )}
                 {GEMINI_TTS_VOICES.map((item) => (
-                  <option value={item.id} key={item.id}>{item.id} · {item.style}</option>
+                  <option value={item.id} key={item.id}>{item.id.charAt(0).toUpperCase() + item.id.slice(1)} · {item.style}</option>
                 ))}
               </select>
+              <button
+                type="button"
+                className="tts-voice-library-button"
+                onClick={() => void previewSelectedVoice()}
+                disabled={keyStatus !== "configured" || isPreviewingSelectedVoice}
+                title={keyStatus === "configured" ? "用目前的模型試聽這個聲線" : "請先設定 Gemini API key"}
+              >
+                {isPreviewingSelectedVoice ? "生成中…" : "試聽"}
+              </button>
               <button
                 type="button"
                 className="tts-voice-library-button"
@@ -256,6 +295,10 @@ export default function TtsStudio({ onGenerated }: { onGenerated: (audio: Genera
               </button>
             </div>
             {extendedVoice && <small className="tts-selected-voice-meta">{extendedVoice.languageCode || "語言未標示"} · {extendedVoice.gender || "性別未標示"}</small>}
+            {selectedVoicePreview?.voice === voice && selectedVoicePreview.model === model && (
+              // eslint-disable-next-line jsx-a11y/media-has-caption
+              <audio className="tts-selected-voice-preview" controls autoPlay preload="metadata" src={selectedVoicePreview.url} />
+            )}
           </label>
         </div>
 
@@ -355,8 +398,11 @@ export default function TtsStudio({ onGenerated }: { onGenerated: (audio: Genera
             {previewAudio && (
               <div className="tts-voice-preview">
                 <div><strong>試聽：{previewAudio.voice.displayName}</strong><span>{previewAudio.voice.languageCode || "英文固定短句"}</span></div>
-                {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-                <audio controls preload="metadata" src={previewAudio.url} />
+                <div className="tts-voice-preview-player">
+                  {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                  <audio controls preload="metadata" src={previewAudio.url} onPlay={pauseOtherPreviewAudio} />
+                  <button type="button" className="select-voice" onClick={() => selectExtendedVoice(previewAudio.voice)}>選用</button>
+                </div>
               </div>
             )}
 
@@ -366,21 +412,32 @@ export default function TtsStudio({ onGenerated }: { onGenerated: (audio: Genera
               <div className="tts-voice-loading">沒有符合條件的聲線。</div>
             ) : (
               <div className="tts-voice-list" aria-live="polite">
-                {voices.map((item) => (
-                  <article className="tts-voice-card" key={item.id}>
-                    <div className="tts-voice-card-copy">
-                      <div className="tts-voice-name"><strong>{item.displayName}</strong><code>{item.id}</code></div>
-                      <small>{[item.languageCode, item.gender, item.accent].filter(Boolean).join(" · ") || "未提供語音資訊"}</small>
-                      {item.description && <p>{item.description}</p>}
-                    </div>
-                    <div className="tts-voice-card-actions">
-                      <button type="button" onClick={() => void previewVoice(item)} disabled={Boolean(previewingVoiceId)}>
-                        {previewingVoiceId === item.id ? "正在生成…" : "試聽"}
-                      </button>
-                      <button type="button" className="select-voice" onClick={() => selectExtendedVoice(item)}>選用</button>
-                    </div>
-                  </article>
-                ))}
+                {voices.map((item) => {
+                  const isGeneratingPreview = previewingVoiceId === item.id;
+                  const cardPreviewUrl = !isGeneratingPreview && previewAudio?.voice.id === item.id ? previewAudio.url : "";
+                  return (
+                    <article className="tts-voice-card" key={item.id}>
+                      <div className="tts-voice-card-copy">
+                        <div className="tts-voice-name"><strong>{item.displayName}</strong><code>{item.id}</code></div>
+                        <small>{[item.languageCode, item.gender, item.accent].filter(Boolean).join(" · ") || "未提供語音資訊"}</small>
+                        {isGeneratingPreview ? (
+                          <p className="tts-voice-card-status" aria-live="polite">正在生成試聽…</p>
+                        ) : cardPreviewUrl ? (
+                          // eslint-disable-next-line jsx-a11y/media-has-caption
+                          <audio controls autoPlay preload="metadata" src={cardPreviewUrl} onPlay={pauseOtherPreviewAudio} />
+                        ) : (
+                          item.description && <p>{item.description}</p>
+                        )}
+                      </div>
+                      <div className="tts-voice-card-actions">
+                        {!isGeneratingPreview && !cardPreviewUrl && (
+                          <button type="button" onClick={() => void previewVoice(item)} disabled={Boolean(previewingVoiceId)}>試聽</button>
+                        )}
+                        <button type="button" className="select-voice" onClick={() => selectExtendedVoice(item)}>選用</button>
+                      </div>
+                    </article>
+                  );
+                })}
               </div>
             )}
 
