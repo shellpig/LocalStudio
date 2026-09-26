@@ -34,10 +34,10 @@ export type GeneratedVideo = {
   filename: string;
   subfolder: string;
   type: string;
-  /** "image" marks a still rendered by the image pipeline; absent/"video" otherwise. */
-  kind?: "video" | "image";
-  /** Which model made an image: absent for H3, "qwen-image-2.1" for the 圖像編輯 page. */
-  model?: "qwen-image-2.1";
+  /** Output category; absent means video for older works. */
+  kind?: "video" | "image" | "audio";
+  model?: "qwen-image-2.1" | "gemini-3.8-flash-tts" | "gemini-3.8-flash-lite-tts";
+  voice?: string;
   steps?: number;
   qwenAspect?: QwenAspect;
   qwenSize?: QwenSize;

@@ -32,8 +32,10 @@ import {
   resolveOutputDimensions,
 } from "@/lib/comfy";
 import { CropRect, cropImageFile, ImageCropper, readImageDimensions } from "./image-cropper";
+import { audioDownloadUrl } from "@/lib/tts";
+import TtsStudio from "./tts-studio";
 
-type View = "create" | "edit" | "works";
+type View = "create" | "edit" | "works" | "tts";
 type SourceMode = "text" | "image" | "reference";
 type ImageDimensions = { width: number; height: number };
 type ReferenceImageDraft = {
@@ -70,7 +72,7 @@ function emptyReferenceImage(id: number): ReferenceImageDraft {
 
 export default function Home() {
   const [view, setView] = useState<View>("create");
-  const [worksTab, setWorksTab] = useState<"video" | "image">("video");
+  const [worksTab, setWorksTab] = useState<"video" | "image" | "audio">("video");
   const [sourceMode, setSourceMode] = useState<SourceMode>("text");
   const [connected, setConnected] = useState(false);
   const [prompt, setPrompt] = useState("");
@@ -213,8 +215,9 @@ export default function Home() {
   }, [anchorImageDimensions, aspect, continuationSource, sourceMode]);
 
   const outputSize = sizeLabels[resolution];
-  const videoWorks = useMemo(() => videos.filter((item) => item.kind !== "image"), [videos]);
+  const videoWorks = useMemo(() => videos.filter((item) => item.kind !== "image" && item.kind !== "audio"), [videos]);
   const imageWorks = useMemo(() => videos.filter((item) => item.kind === "image"), [videos]);
+  const audioWorks = useMemo(() => videos.filter((item) => item.kind === "audio"), [videos]);
   const qwenWorks = useMemo(() => imageWorks.filter((item) => item.model === "qwen-image-2.1"), [imageWorks]);
   // Steps that actually run per profile, for the cooldown-time estimate. Ref2VA and image are always 8.
   const cooldownSteps = profile === "cooled-turbo-4" ? 4 : sourceMode === "reference" ? 8 : profile === "quality" ? 20 : profile === "cooled-turbo-8" ? 8 : 6;
@@ -886,6 +889,7 @@ export default function Home() {
   const navItems: Array<{ id: View; icon: string; label: string }> = [
     { id: "create", icon: "✦", label: "創作" },
     { id: "edit", icon: "✎", label: "圖像編輯" },
+    { id: "tts", icon: "♫", label: "語音生成" },
     { id: "works", icon: "▦", label: "作品" },
   ];
 
@@ -1542,24 +1546,30 @@ export default function Home() {
               <ImageGrid videos={qwenWorks.slice(0, 3)} onDelete={removeVideo} onRedo={redoImage} onReuseSeed={reuseSeed} emptyText="第一張圖，從一句話開始" />
             </section>
           </>
-        ) : (
+        ) : view === "works" ? (
           <section className="works-page">
             <div className="works-heading">
               <div>
                 <p className="eyebrow">LOCAL CREATIONS</p><h1>我的作品</h1>
-                <p>{worksTab === "image" ? "圖片儲存在本機 ComfyUI/output/H3_Image。" : "影片都儲存在本機 ComfyUI/output/video。"}</p>
+                <p>{worksTab === "image" ? "圖片儲存在本機 ComfyUI/output/H3_Image。" : worksTab === "audio" ? "聲音儲存在本機 ComfyUI/output/H3_Audio。" : "影片都儲存在本機 ComfyUI/output/video。"}</p>
               </div>
               <button className="secondary-button" onClick={refreshHistory}>↻ 重新整理</button>
             </div>
             <div className="works-tabs" role="tablist">
               <button role="tab" aria-selected={worksTab === "video"} className={worksTab === "video" ? "active" : ""} onClick={() => setWorksTab("video")}>影片（{videoWorks.length}）</button>
               <button role="tab" aria-selected={worksTab === "image"} className={worksTab === "image" ? "active" : ""} onClick={() => setWorksTab("image")}>圖片（{imageWorks.length}）</button>
+              <button role="tab" aria-selected={worksTab === "audio"} className={worksTab === "audio" ? "active" : ""} onClick={() => setWorksTab("audio")}>聲音（{audioWorks.length}）</button>
             </div>
             {worksTab === "image"
               ? <ImageGrid videos={imageWorks} onDelete={removeVideo} onRedo={redoImage} onReuseSeed={reuseSeed} emptyText="目前還沒有本次工作階段的圖片" />
+              : worksTab === "audio"
+                ? <AudioGrid audios={audioWorks} onDelete={removeVideo} />
               : <VideoGrid videos={videoWorks} onDelete={removeVideo} onExtend={extendVideo} onRedo={redoVideo} onReuseSeed={reuseSeed} emptyText="目前還沒有本次工作階段的作品" />}
           </section>
-        )}
+        ) : <TtsStudio onGenerated={(audio) => {
+          setVideos((current) => [audio, ...current.filter((item) => item.filename !== audio.filename || item.subfolder !== audio.subfolder)]);
+          setWorksTab("audio");
+        }} />}
       </section>
 
       {cropTarget && cropFile && (
@@ -1849,6 +1859,49 @@ function ImageGrid({ videos, onDelete, onRedo, onReuseSeed, emptyText }: ImageGr
           </article>
         );
       })}
+    </div>
+  );
+}
+
+function AudioGrid({ audios, onDelete }: { audios: GeneratedVideo[]; onDelete: (audio: GeneratedVideo) => Promise<void> }) {
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  async function confirmDelete(audio: GeneratedVideo) {
+    const key = `${audio.subfolder}/${audio.filename}`;
+    if (!window.confirm(`確定要刪除「${audio.filename}」嗎？\n聲音會移到 Windows 資源回收筒。`)) return;
+    setDeleting(key);
+    try {
+      await onDelete(audio);
+    } catch (caught) {
+      window.alert(caught instanceof Error ? caught.message : "刪除失敗，請稍後再試。 ");
+    } finally {
+      setDeleting(null);
+    }
+  }
+
+  if (audios.length === 0) {
+    return <div className="empty-state"><span>♫</span><strong>還沒有聲音作品</strong><p>到「語音生成」製作第一段語音。</p></div>;
+  }
+  return (
+    <div className="video-grid">
+      {audios.map((audio) => (
+        <article className="video-card audio-card" key={`${audio.subfolder}/${audio.filename}`}>
+          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+          <audio controls preload="metadata" src={outputUrl(audio)} />
+          <div>
+            <div className="video-meta">
+              <span title={audio.filename}>{audio.filename}</span>
+              {audio.voice && <small>聲線 {audio.voice}</small>}
+              {audio.model === "gemini-3.8-flash-tts" && <small>Gemini 3.8 Flash TTS</small>}
+              {audio.model === "gemini-3.8-flash-lite-tts" && <small>Gemini 3.8 Flash-Lite TTS</small>}
+            </div>
+            <div className="card-actions">
+              <a className="img-action" href={audioDownloadUrl(audio.filename)}>下載 WAV</a>
+              <button className="img-action delete" onClick={() => void confirmDelete(audio)} disabled={deleting === `${audio.subfolder}/${audio.filename}`}>刪除</button>
+            </div>
+          </div>
+        </article>
+      ))}
     </div>
   );
 }

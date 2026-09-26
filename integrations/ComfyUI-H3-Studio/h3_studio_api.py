@@ -12,11 +12,28 @@ import subprocess
 import tempfile
 import uuid
 
+import aiohttp
 from aiohttp import web
 from PIL import Image, ImageOps
 
 import folder_paths
 from server import PromptServer
+
+from .h3_studio_tts import (
+    GEMINI_TTS_OUTPUT_SUBFOLDER,
+    build_gemini_tts_preview_request,
+    build_gemini_tts_request,
+    build_gemini_voice_list_params,
+    extract_gemini_tts_wav,
+    gemini_tts_preview_cache_name,
+    gemini_tts_http_error,
+    is_gemini_tts_filename,
+    list_gemini_tts_audio,
+    read_gemini_tts_preview_cache,
+    sanitize_gemini_voice_list_response,
+    save_gemini_tts_audio,
+    write_gemini_tts_preview_cache,
+)
 
 
 PROMPT_OPTIMIZATION_LOCK = asyncio.Lock()
@@ -30,6 +47,10 @@ GROK_MAX_TURNS = 8
 STUDIO_ORIGINS = {"http://localhost:3000", "http://127.0.0.1:3000"}
 PROMPT_SCHEMA_PATH = Path(__file__).with_name("h3_prompt_output_schema.json")
 STUDIO_WORKING_DIRECTORY = Path(__file__).resolve().parents[2] / "h3-local-studio"
+GEMINI_TTS_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions"
+GEMINI_VOICES_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/voices"
+GEMINI_TTS_PREVIEW_LOCK = asyncio.Lock()
+GEMINI_TTS_PREVIEW_MEMORY_CACHE = {}
 
 
 class SHFILEOPSTRUCTW(ctypes.Structure):
@@ -56,14 +77,18 @@ def recycle_file(path):
         raise OSError(result, "Could not move output to the Recycle Bin")
 
 
-def resolve_output_video(filename, subfolder="", allow_images=False):
+def resolve_output_video(filename, subfolder="", allow_images=False, allow_audio=False):
     if not isinstance(filename, str) or not isinstance(subfolder, str):
         raise ValueError("Invalid output path")
     allowed = {".mp4", ".webm", ".mov"}
     if allow_images:
         allowed = allowed | {".png", ".jpg", ".jpeg", ".webp"}
+    if allow_audio:
+        allowed = allowed | {".wav"}
     if os.path.basename(filename) != filename or Path(filename).suffix.lower() not in allowed:
-        raise ValueError("Only output videos are allowed")
+        raise ValueError("Unsupported output file")
+    if Path(filename).suffix.lower() == ".wav" and (subfolder != GEMINI_TTS_OUTPUT_SUBFOLDER or not is_gemini_tts_filename(filename)):
+        raise ValueError("Invalid audio output path")
     output_root = Path(folder_paths.get_output_directory()).resolve()
     target = (output_root / subfolder / filename).resolve()
     if os.path.commonpath((os.path.normcase(target), os.path.normcase(output_root))) != os.path.normcase(output_root):
@@ -719,6 +744,187 @@ async def run_grok_prompt_optimizer(instruction, image_paths):
     return structured.get("optimizedPrompt") if isinstance(structured, dict) else None
 
 
+@PromptServer.instance.routes.get("/h3-studio/tts/status")
+async def gemini_tts_status(request):
+    if request.headers.get("Origin") not in STUDIO_ORIGINS:
+        return web.json_response({"error": "This endpoint is only available from H3 Local Studio"}, status=403)
+    return web.json_response({"configured": bool(os.environ.get("GEMINI_TTS_API_KEY", "").strip())})
+
+
+class GeminiTtsUpstreamError(Exception):
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
+
+
+async def request_gemini_tts_wav(api_key, payload):
+    try:
+        timeout = aiohttp.ClientTimeout(total=300)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(
+                GEMINI_TTS_ENDPOINT,
+                headers={"x-goog-api-key": api_key},
+                json=payload,
+            ) as google_response:
+                if google_response.status != 200:
+                    raise GeminiTtsUpstreamError(502, gemini_tts_http_error(google_response.status))
+                try:
+                    interaction = await google_response.json()
+                    return extract_gemini_tts_wav(interaction)
+                except (aiohttp.ContentTypeError, json.JSONDecodeError, UnicodeDecodeError):
+                    raise GeminiTtsUpstreamError(502, "Gemini 回應格式無效，請稍後再試。") from None
+                except ValueError as error:
+                    raise GeminiTtsUpstreamError(502, str(error)) from None
+    except asyncio.TimeoutError:
+        raise GeminiTtsUpstreamError(504, "Gemini 語音生成逾時，請稍後再試。") from None
+    except aiohttp.ClientError:
+        raise GeminiTtsUpstreamError(502, "無法連線到 Gemini API，請檢查網路連線後再試。") from None
+
+
+def gemini_voice_library_http_error(status):
+    if status in {401, 403}:
+        return "Gemini API 金鑰無效，或目前沒有權限使用聲線庫。"
+    if status == 429:
+        return "Gemini API 請求過多，請稍後再搜尋聲線。"
+    if status == 400:
+        return "Gemini 聲線庫無法接受這組搜尋條件。"
+    if status >= 500:
+        return "Gemini 聲線庫暫時無法使用，請稍後再試。"
+    return f"Gemini 聲線搜尋失敗（HTTP {status}）。"
+
+
+@PromptServer.instance.routes.get("/h3-studio/tts/voices")
+async def list_gemini_tts_voices(request):
+    if request.headers.get("Origin") not in STUDIO_ORIGINS:
+        return web.json_response({"error": "This endpoint is only available from H3 Local Studio"}, status=403)
+    api_key = os.environ.get("GEMINI_TTS_API_KEY", "").strip()
+    if not api_key:
+        return web.json_response({"error": "尚未設定 GEMINI_TTS_API_KEY，請設定 Windows 使用者環境變數並重新啟動 ComfyUI。"}, status=503)
+
+    try:
+        params = build_gemini_voice_list_params({
+            "search": request.query.get("search", ""),
+            "languageCode": request.query.get("language_code", ""),
+            "gender": request.query.get("gender", ""),
+            "pageToken": request.query.get("page_token", ""),
+        })
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=45)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(
+                GEMINI_VOICES_ENDPOINT,
+                headers={"x-goog-api-key": api_key},
+                params=params,
+            ) as google_response:
+                if google_response.status != 200:
+                    return web.json_response(
+                        {"error": gemini_voice_library_http_error(google_response.status)},
+                        status=502,
+                    )
+                try:
+                    voices = sanitize_gemini_voice_list_response(await google_response.json())
+                except (aiohttp.ContentTypeError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+                    return web.json_response({"error": "Gemini 聲線清單格式無效，請稍後再試。"}, status=502)
+                return web.json_response(voices, headers={"Cache-Control": "no-store"})
+    except asyncio.TimeoutError:
+        return web.json_response({"error": "Gemini 聲線搜尋逾時，請稍後再試。"}, status=504)
+    except aiohttp.ClientError:
+        return web.json_response({"error": "無法連線到 Gemini API，請檢查網路連線後再試。"}, status=502)
+
+
+@PromptServer.instance.routes.post("/h3-studio/tts/preview")
+async def preview_gemini_tts_voice(request):
+    if request.headers.get("Origin") not in STUDIO_ORIGINS:
+        return web.json_response({"error": "This endpoint is only available from H3 Local Studio"}, status=403)
+    api_key = os.environ.get("GEMINI_TTS_API_KEY", "").strip()
+    if not api_key:
+        return web.json_response({"error": "尚未設定 GEMINI_TTS_API_KEY，請設定 Windows 使用者環境變數並重新啟動 ComfyUI。"}, status=503)
+
+    try:
+        data = await request.json()
+        payload, language_code, preview_text = build_gemini_tts_preview_request(data)
+    except (json.JSONDecodeError, UnicodeDecodeError, aiohttp.ContentTypeError):
+        return web.json_response({"error": "聲線試聽設定不是有效的 JSON"}, status=400)
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+
+    cache_name = gemini_tts_preview_cache_name(payload["model"], payload["generation_config"]["speech_config"][0]["voice"], language_code, preview_text)
+    cache_directory = Path(folder_paths.get_temp_directory()) / "h3_tts_preview_cache"
+    wav = GEMINI_TTS_PREVIEW_MEMORY_CACHE.get(cache_name)
+    if wav is None:
+        wav = read_gemini_tts_preview_cache(cache_directory, cache_name)
+    if wav is None:
+        async with GEMINI_TTS_PREVIEW_LOCK:
+            wav = GEMINI_TTS_PREVIEW_MEMORY_CACHE.get(cache_name)
+            if wav is None:
+                wav = read_gemini_tts_preview_cache(cache_directory, cache_name)
+            if wav is None:
+                try:
+                    wav = await request_gemini_tts_wav(api_key, payload)
+                except GeminiTtsUpstreamError as error:
+                    return web.json_response({"error": str(error)}, status=error.status)
+                GEMINI_TTS_PREVIEW_MEMORY_CACHE[cache_name] = wav
+                while len(GEMINI_TTS_PREVIEW_MEMORY_CACHE) > 32:
+                    GEMINI_TTS_PREVIEW_MEMORY_CACHE.pop(next(iter(GEMINI_TTS_PREVIEW_MEMORY_CACHE)))
+                try:
+                    write_gemini_tts_preview_cache(cache_directory, cache_name, wav)
+                except OSError:
+                    # The in-process cache still prevents duplicate charges until ComfyUI restarts.
+                    pass
+
+    return web.Response(body=wav, content_type="audio/wav", headers={"Cache-Control": "no-store"})
+
+
+@PromptServer.instance.routes.get("/h3-studio/tts/download")
+async def download_gemini_tts(request):
+    filename = request.query.get("filename")
+    if not is_gemini_tts_filename(filename):
+        return web.json_response({"error": "Invalid audio output path"}, status=400)
+    try:
+        target = resolve_output_video(filename, GEMINI_TTS_OUTPUT_SUBFOLDER, allow_audio=True)
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+    if not target.is_file():
+        return web.json_response({"error": "Audio file not found"}, status=404)
+    return web.FileResponse(target, headers={
+        "Content-Disposition": f'attachment; filename="{target.name}"',
+        "Content-Type": "audio/wav",
+        "X-Content-Type-Options": "nosniff",
+    })
+
+
+@PromptServer.instance.routes.post("/h3-studio/tts/generate")
+async def generate_gemini_tts(request):
+    if request.headers.get("Origin") not in STUDIO_ORIGINS:
+        return web.json_response({"error": "This endpoint is only available from H3 Local Studio"}, status=403)
+
+    api_key = os.environ.get("GEMINI_TTS_API_KEY", "").strip()
+    if not api_key:
+        return web.json_response({"error": "尚未設定 GEMINI_TTS_API_KEY，請設定 Windows 使用者環境變數並重新啟動 ComfyUI。"}, status=503)
+
+    try:
+        data = await request.json()
+        payload = build_gemini_tts_request(data)
+    except (json.JSONDecodeError, UnicodeDecodeError, aiohttp.ContentTypeError):
+        return web.json_response({"error": "語音生成設定不是有效的 JSON"}, status=400)
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+
+    try:
+        wav = await request_gemini_tts_wav(api_key, payload)
+    except GeminiTtsUpstreamError as error:
+        return web.json_response({"error": str(error)}, status=error.status)
+
+    try:
+        item = save_gemini_tts_audio(folder_paths.get_output_directory(), wav, payload["model"], data["voice"])
+    except OSError:
+        return web.json_response({"error": "無法儲存生成的語音，請檢查本機輸出資料夾。"}, status=500)
+    return web.json_response(item, headers={"Cache-Control": "no-store"})
+
+
 @PromptServer.instance.routes.post("/h3-studio/optimize-prompt")
 async def optimize_h3_prompt(request):
     if request.headers.get("Origin") not in STUDIO_ORIGINS:
@@ -797,6 +1003,7 @@ async def list_h3_outputs(_request):
             item.update(load_metadata(target))
             item["extendable"] = False
             outputs.append(item)
+    outputs.extend(list_gemini_tts_audio(output_root))
     outputs.sort(key=lambda item: item["modifiedAt"], reverse=True)
     return web.json_response({"outputs": outputs})
 
@@ -1027,13 +1234,13 @@ async def upscale_h3_output(request):
 async def delete_h3_output(request):
     data = await request.json()
     try:
-        target = resolve_output_video(data.get("filename"), data.get("subfolder", ""), allow_images=True)
+        target = resolve_output_video(data.get("filename"), data.get("subfolder", ""), allow_images=True, allow_audio=True)
     except ValueError as error:
         return web.json_response({"error": str(error)}, status=400)
     except PermissionError as error:
         return web.json_response({"error": str(error)}, status=403)
     if not target.is_file():
-        return web.json_response({"error": "Output video not found"}, status=404)
+        return web.json_response({"error": "Output file not found"}, status=404)
 
     recycle_file(target)
     metadata_path = metadata_path_for(target)

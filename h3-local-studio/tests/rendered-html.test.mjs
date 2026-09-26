@@ -36,6 +36,7 @@ test("server-renders H3 Local Studio controls", async () => {
   assert.match(html, /960 × 544/);
   assert.match(html, /開啟 · 立體聲/);
   assert.match(html, /關閉 · 無音軌/);
+  assert.match(html, /語音生成/);
 });
 
 test("keeps Motion Context continuation wiring intact", async () => {
