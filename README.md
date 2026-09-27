@@ -431,7 +431,7 @@ Invoke-RestMethod 'http://127.0.0.1:8188/h3-studio/outputs'
 
 在雲端執行，不佔本機 GPU。需要先完成步驟 11。
 
-想先不經過本介面、直接在網頁上試用 Gemini TTS，可以用 Google AI Studio 的 Generate Speech 頁：<https://aistudio.google.com/generate-speech>。
+語音生成頁上方左側顯示 API 金鑰狀態，右側是「Google Studio 生成」。按「開啟」會在瀏覽器新分頁打開 Google AI Studio 的 Generate Speech 頁，直接在 Google 網頁上試用 Gemini TTS：<https://aistudio.google.com/generate-speech>。此連結不需要先設定本機 API 金鑰。
 
 | 項目 | 說明 |
 |---|---|

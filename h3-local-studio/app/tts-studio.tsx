@@ -232,16 +232,27 @@ export default function TtsStudio({ onGenerated }: { onGenerated: (audio: Genera
         <p>選擇模型與聲線，將文字生成為可試聽、下載的 WAV 音訊。</p>
       </div>
 
-      <section className="tts-key-status" aria-live="polite">
-        <div>
-          <span className={`status-dot ${keyStatus === "configured" ? "tts-key-ready" : ""}`} />
-          <strong>{keyStatusLabel}</strong>
-          <small>GEMINI_TTS_API_KEY</small>
-        </div>
-        <button type="button" onClick={() => void refreshKeyStatus()} disabled={keyStatus === "checking"}>
-          {keyStatus === "checking" ? "確認中…" : "重新檢查"}
-        </button>
-      </section>
+      <div className="tts-top-cards">
+        <section className="tts-key-status" aria-live="polite">
+          <div>
+            <span className={`status-dot ${keyStatus === "configured" ? "tts-key-ready" : ""}`} />
+            <strong>{keyStatusLabel}</strong>
+            <small>GEMINI_TTS_API_KEY</small>
+          </div>
+          <button type="button" onClick={() => void refreshKeyStatus()} disabled={keyStatus === "checking"}>
+            {keyStatus === "checking" ? "確認中…" : "重新檢查"}
+          </button>
+        </section>
+        <section className="tts-studio-link" aria-label="Google Studio">
+          <div>
+            <strong>Google Studio 生成</strong>
+            <small>前往 Google AI Studio 試用語音生成</small>
+          </div>
+          <a href="https://aistudio.google.com/generate-speech" target="_blank" rel="noopener noreferrer">
+            開啟 ↗
+          </a>
+        </section>
+      </div>
 
       {keyStatus === "missing" && (
         <div className="notice warning">

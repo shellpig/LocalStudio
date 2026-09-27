@@ -294,6 +294,8 @@ button { color: inherit; }
 .mention-menu code { color: #b69cff; font-size: 11px; }
 
 .tts-page { max-width: 1030px; margin: 0 auto; }
+.tts-top-cards { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; margin: 0 auto 14px; }
+.tts-top-cards .tts-key-status { margin: 0; }
 .tts-key-status { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 auto 14px; border: 1px solid var(--line); border-radius: 11px; background: #111219; padding: 12px 15px; }
 .tts-key-status > div { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .tts-key-status strong { color: #c8c9d2; font-size: 12px; }
@@ -302,6 +304,12 @@ button { color: inherit; }
 .tts-key-status button { flex: 0 0 auto; border: 1px solid #343641; border-radius: 7px; background: transparent; padding: 7px 10px; color: #999ba8; font-size: 10px; cursor: pointer; }
 .tts-key-status button:hover { border-color: #55427e; color: #d2c8f2; }
 .tts-key-status button:disabled { opacity: .5; cursor: wait; }
+.tts-studio-link { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-width: 0; border: 1px solid var(--line); border-radius: 11px; background: #111219; padding: 12px 15px; }
+.tts-studio-link > div { display: grid; gap: 4px; min-width: 0; }
+.tts-studio-link strong { color: #c8c9d2; font-size: 12px; }
+.tts-studio-link small { color: #797b87; font-size: 10px; }
+.tts-studio-link a { flex: 0 0 auto; border: 1px solid #4f4279; border-radius: 7px; background: #211b35; padding: 7px 10px; color: #c7b7ff; font-size: 10px; text-decoration: none; }
+.tts-studio-link a:hover { border-color: #7652ff; }
 .tts-composer { max-width: 1030px; margin: 0 auto; border: 1px solid var(--line); border-radius: 18px; background: linear-gradient(145deg,rgba(22,23,31,.98),rgba(16,17,24,.98)); box-shadow: 0 24px 70px rgba(0,0,0,.3); padding: 20px 22px 0; }
 .tts-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
 .tts-fields label, .tts-text-field, .tts-style-field { display: grid; gap: 7px; min-width: 0; }
@@ -390,4 +398,8 @@ button { color: inherit; }
   .tts-voice-card-actions { justify-content: flex-end; }
   .tts-voice-preview > div { align-items: flex-start; flex-direction: column; gap: 3px; }
   .tts-voice-preview > .tts-voice-preview-player { align-items: center; flex-direction: row; gap: 8px; }
+}
+
+@media (max-width: 900px) {
+  .tts-top-cards { grid-template-columns: 1fr; }
 }
