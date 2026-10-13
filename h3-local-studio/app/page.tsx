@@ -80,6 +80,26 @@ const CROP_ASPECT: Record<QwenAspect, number> = { "16:9": 16 / 9, "4:3": 4 / 3, 
 const EXAMPLE_PROMPT =
   "電影感寫實風格，雨後黃昏的台北街道，一位穿深色風衣的人緩慢走過霓虹燈下，鏡頭低角度向前跟拍，水面倒影細緻，微風吹動衣角。環境音：細雨、遠方車流、輕柔低沉的配樂。不要文字、字幕、Logo 或浮水印。";
 const DURATION_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+const ORB360_LORA = "minimax_h3_orb360_step1500.safetensors";
+const ORB360_PROMPT = `ORB360_CW. A frozen-time scene with one uninterrupted clockwise 360-degree camera orbit around @subject.
+
+Preserve the reference image's character, pose, facial expression, clothing, environment, lighting, and visual style.
+
+The character and the entire environment remain completely frozen in world space throughout the clip. The camera is the only moving element.
+
+The character holds the exact same pose and expression: no blinking, breathing, speaking, head movement, eye tracking, or limb movement. Hair, clothing, accessories, and loose fabric remain rigidly fixed.
+
+All background elements belonging to the original scene remain motionless in their original world positions. Maintain the same type of environment as the supplied image throughout the orbit. Do not introduce unrelated scenery or animated background elements.
+
+The camera smoothly circles the character clockwise exactly once, maintaining constant speed, distance, elevation, focal length, and a fixed look-at point. Start from the reference viewpoint and return to that same viewpoint at the end.
+
+Reveal the scene's side and rear views with coherent three-dimensional geometry and natural parallax. Background objects stay anchored to their original world positions. Their apparent positions change only because the camera moves.
+
+The character does not rotate. The environment does not rotate. Do not spin the image like a flat photograph or card.
+
+Keep lighting fixed in world space. No cuts, zooms, camera roll, deformation, flicker, or scene transitions.
+
+Silent video. No dialogue, sound effects, or music.`;
 
 function emptyReferenceImage(id: number): ReferenceImageDraft {
   return { id, file: null, originalFile: null, crop: null, preview: null, dimensions: null, label: "", description: "" };
@@ -727,14 +747,25 @@ export default function Home() {
     }
   }
 
+  function applyOrb360Prompt(mode: SourceMode = sourceMode) {
+    const reference = referenceImages.find((item) => item.file) ?? referenceImages[0];
+    const label = reference?.label.replace(/^@+/, "").trim();
+    const subject = mode === "reference" ? (label ? `@${label}` : "<Subject 1>") : "the subject shown in the supplied image";
+    setPrompt(ORB360_PROMPT.replace("@subject", () => subject));
+    setPromptBeforeOptimization(null);
+    setOptimizedPromptMode(null);
+  }
+
   function addExtraLora() {
     const unused = availableLoras.find((name) => !extraLoras.some((item) => item.name === name));
     if (!unused) return;
     setExtraLoras((current) => [...current, { id: nextLoraId.current++, name: unused, strength: 0.8 }]);
+    if (unused === ORB360_LORA && sourceMode !== "text" && !continuationSource && !prompt.trim() && !isOptimizing) applyOrb360Prompt();
   }
 
   function updateExtraLora(id: number, patch: Partial<ExtraLora>) {
     setExtraLoras((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+    if (patch.name === ORB360_LORA && sourceMode !== "text" && !continuationSource && !prompt.trim() && !isOptimizing) applyOrb360Prompt();
   }
 
   function removeExtraLora(id: number) {
@@ -938,6 +969,7 @@ export default function Home() {
     setSourceMode(nextMode);
     setPromptBeforeOptimization(null);
     setOptimizedPromptMode(null);
+    if (nextMode !== "text" && !continuationSource && extraLoras.some((item) => item.name === ORB360_LORA) && !prompt.trim() && !isOptimizing) applyOrb360Prompt(nextMode);
     if (nextMode === "reference") {
       setProfile("cooled-turbo-8");
       setResolution("native");
@@ -1246,6 +1278,12 @@ export default function Home() {
                       <button type="button" onClick={() => removeExtraLora(item.id)}>移除</button>
                     </div>
                   ))}
+                  {sourceMode !== "text" && !continuationSource && extraLoras.some((item) => item.name === ORB360_LORA) && (
+                    <p className="lora-stack-note">
+                      <button type="button" className="prompt-restore-button" onClick={() => applyOrb360Prompt()} disabled={isOptimizing}>套用環繞提示詞</button>
+                      {" "}人物與背景保持靜止，只有鏡頭環繞。套用會替換目前提示詞。
+                    </p>
+                  )}
                   {extraLoras.length > 0 && (
                     <p className="lora-stack-note">
                       疊加時所有 LoRA 會改用 merge 模式，否則後面的會蓋掉前面的。畫面會比單一 LoRA 稍軟。
