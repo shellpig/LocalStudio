@@ -306,9 +306,37 @@ button { color: inherit; }
 .lora-stack-heading p { margin: 3px 0 0; color: #858794; font-size: 11px; }
 .lora-stack-heading > button { flex: 0 0 auto; border: 1px solid #4f4279; border-radius: 8px; background: #211b35; padding: 8px 11px; color: #c7b7ff; font-size: 11px; cursor: pointer; }
 .lora-stack-heading > button:disabled { opacity: .4; cursor: not-allowed; }
-.lora-row { display: flex; align-items: center; gap: 9px; margin-top: 10px; }
+.lora-row { display: grid; grid-template-columns: 21px minmax(0,1fr) auto auto; align-items: start; gap: 9px; margin-top: 10px; }
 .lora-order { flex: 0 0 auto; display: grid; place-items: center; width: 21px; height: 21px; border-radius: 6px; background: #211b35; color: #a98cff; font-size: 10px; }
-.lora-row > select { flex: 1 1 auto; min-width: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); padding: 8px 10px; color: var(--text); font-size: 12px; }
+.lora-order { grid-column: 1; grid-row: 1; margin-top: 5px; }
+.lora-row > .lora-strength { grid-column: 3; grid-row: 1; }
+.lora-row > button { grid-column: 4; grid-row: 1; }
+.lora-picker { display: contents; }
+.lora-picker-trigger { grid-column: 2; grid-row: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); padding: 8px 10px; color: var(--text); font-size: 12px; text-align: left; cursor: pointer; }
+.lora-picker-trigger > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lora-picker-trigger:focus-visible, .lora-picker-list button:focus-visible { outline: 2px solid var(--purple-2); outline-offset: 2px; }
+.lora-picker-panel { grid-column: 1 / -1; grid-row: 3; border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: #181923; }
+.lora-picker-panel.is-open { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 10px; }
+.lora-picker-list { max-height: 280px; overflow-y: auto; min-width: 0; }
+.lora-picker-list button { display: block; width: 100%; border: 0; border-radius: 5px; padding: 8px; background: transparent; color: var(--text); font-size: 11px; line-height: 1.5; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.lora-picker-list button:hover, .lora-picker-list button[aria-selected="true"] { background: #29203e; }
+.lora-picker-list button[aria-disabled="true"] { color: var(--muted); cursor: not-allowed; }
+.lora-picker-list small { display: block; color: var(--muted); }
+.lora-help-slot { min-width: 0; }
+.is-open .lora-help-slot { min-height: 230px; }
+.lora-help { font-size: 11px; line-height: 1.7; overflow-wrap: anywhere; }
+.lora-help strong { color: #c8b8ff; }
+.lora-help p { margin: 7px 0 0; }
+.lora-help code { white-space: normal; }
+.lora-help-note { color: #e6c58d; }
+@media (max-width: 700px) {
+  .lora-picker-trigger { grid-column: 2 / -1; }
+  .lora-row > .lora-strength { grid-column: 2 / 4; grid-row: 2; }
+  .lora-row > button { grid-row: 2; }
+  .lora-picker-panel.is-open { grid-template-columns: minmax(0,1fr); }
+  .lora-picker-list { max-height: 180px; }
+  .is-open .lora-help-slot { min-height: 190px; }
+}
 .lora-strength { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; }
 .lora-strength input { width: 74px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); padding: 8px 9px; color: var(--text); font-size: 12px; }
 .lora-row > button { flex: 0 0 auto; border: 1px solid #343641; border-radius: 8px; background: transparent; padding: 8px 10px; color: #8b8d9b; font-size: 11px; cursor: pointer; }

@@ -46,6 +46,7 @@ import { audioDownloadUrl } from "@/lib/tts";
 import TtsStudio from "./tts-studio";
 import EnhanceStudio from "./enhance-studio";
 import GenerationQueuePanel from "./generation-queue-panel";
+import LoraPicker from "./lora-picker";
 import { createGenerationQueue, GenerationJob } from "@/lib/generation-queue";
 
 type View = "create" | "edit" | "works" | "tts";
@@ -1255,15 +1256,8 @@ export default function Home() {
                   {extraLoras.map((item, index) => (
                     <div className="lora-row" key={item.id}>
                       <span className="lora-order">{index + 1}</span>
-                      <select value={item.name} onChange={(event) => updateExtraLora(item.id, { name: event.target.value })}>
-                        {availableLoras.map((name) => (
-                          <option
-                            value={name}
-                            key={name}
-                            disabled={name !== item.name && extraLoras.some((other) => other.name === name)}
-                          >{name.replace(/\.safetensors$/, "")}</option>
-                        ))}
-                      </select>
+                      <LoraPicker value={item.name} names={availableLoras} usedNames={extraLoras.map((other) => other.name)}
+                        onChange={(name) => updateExtraLora(item.id, { name })} />
                       <label className="lora-strength">
                         <span>強度</span>
                         <input
