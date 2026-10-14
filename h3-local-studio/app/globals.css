@@ -52,7 +52,7 @@ button { color: inherit; }
 .hero h1 { margin: 0; font-size: clamp(34px,4.2vw,56px); letter-spacing: .03em; background: linear-gradient(110deg,#fff 28%,#c8b8ff 72%); color: transparent; background-clip: text; }
 .hero > p:last-child { color: var(--muted); margin: 11px 0 0; font-size: 14px; }
 
-.mode-tabs { max-width: 920px; margin: 0 auto 14px; display: grid; grid-template-columns: repeat(4,1fr); padding: 5px; border: 1px solid var(--line); background: #12131a; border-radius: 14px; }
+.mode-tabs { max-width: 1030px; margin: 0 auto 14px; display: grid; grid-template-columns: repeat(5,1fr); padding: 5px; border: 1px solid var(--line); background: #12131a; border-radius: 14px; }
 .mode-tabs button { height: 46px; border: 0; border-radius: 10px; background: transparent; color: #858794; cursor: pointer; }
 .mode-tabs button.active { color: #fff; font-weight: 700; background: linear-gradient(105deg,#6243e7,#8258ff); box-shadow: 0 0 22px rgba(118,82,255,.28); }
 .mode-tabs button:disabled { cursor: default; }
@@ -468,6 +468,16 @@ button { color: inherit; }
 .enhancement-fields .enhancement-check { display: flex; align-items: center; }
 .enhancement-times { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
 .enhancement-fields .error-message { color: #ff9b9b; }
+.swap-fields textarea { width: 100%; min-height: 240px; padding: 12px; border: 1px solid #30323e; border-radius: 8px; background: #181923; color: #d4d2dc; resize: vertical; }
+.swap-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; }
+.swap-upload-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.swap-upload { display: grid; gap: 8px; align-content: start; }
+.swap-upload .image-dropzone { border-radius: 10px; }
+.swap-upload .image-dropzone[aria-disabled=true] { cursor: default; }
+.swap-upload .image-dropzone video { position: absolute; inset: 0; width: 100%; height: 100%; max-height: none; margin: 0; object-fit: contain; border-radius: 0; }
+.swap-upload .image-dropzone img + .crop-actions { right: auto; padding: 0; background: none; }
+.swap-video-actions { left: auto; right: 10px; top: 10px; bottom: auto; }
+@media (max-width: 600px) { .swap-upload-grid { grid-template-columns: 1fr; } }
 @media (max-width: 600px) { .mode-tabs { grid-template-columns: repeat(2,1fr); } .enhancement-fields { padding: 16px; } }
 .studio-editor { min-width: 0; }
 .content.has-generation-queue { padding-left: 28px; padding-right: 28px; }

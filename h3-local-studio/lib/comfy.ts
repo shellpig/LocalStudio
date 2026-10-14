@@ -31,6 +31,15 @@ export type GenerationOptions = {
 };
 
 export type GeneratedVideo = {
+  swapMode?: "head" | "character";
+  swapSource?: string;
+  swapSourceFile?: string;
+  swapReferenceFile?: string;
+  swapStrength?: number;
+  swapTarget?: string;
+  swapCompletedSegments?: number;
+  swapTotalSegments?: number;
+  swapAspect?: string;
   enhanced?: boolean;
   enhancementStrength?: number;
   enhancementSource?: string;

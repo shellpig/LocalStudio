@@ -9,7 +9,7 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "vinext start",
-    "test": "npm run build && node --test tests/rendered-html.test.mjs tests/enhance.test.mjs tests/qwen-camera.test.mjs tests/generation-queue.test.mjs",
+    "test": "npm run build && node --test tests/rendered-html.test.mjs tests/enhance.test.mjs tests/qwen-camera.test.mjs tests/generation-queue.test.mjs tests/swap.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },

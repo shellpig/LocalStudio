@@ -10,6 +10,7 @@ server. The node mappings come from the cooled sampler module.
 
 from . import h3_studio_api
 from . import h3_studio_enhance
+from . import h3_studio_swap
 from .h3_cooled_turbo_sampler import (
     NODE_CLASS_MAPPINGS,
     NODE_DISPLAY_NAME_MAPPINGS,

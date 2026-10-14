@@ -45,6 +45,7 @@ import { ImageMarker } from "./image-marker";
 import { audioDownloadUrl } from "@/lib/tts";
 import TtsStudio from "./tts-studio";
 import EnhanceStudio from "./enhance-studio";
+import SwapStudio from "./swap-studio";
 import GenerationQueuePanel from "./generation-queue-panel";
 import LoraPicker from "./lora-picker";
 import { createGenerationQueue, GenerationJob } from "@/lib/generation-queue";
@@ -111,6 +112,8 @@ export default function Home() {
   const [worksTab, setWorksTab] = useState<"video" | "image" | "audio">("video");
   const [sourceMode, setSourceMode] = useState<SourceMode>("text");
   const [enhancementMode, setEnhancementMode] = useState(false);
+  const [swapMode, setSwapMode] = useState(false);
+  const [swapWork, setSwapWork] = useState<GeneratedVideo | null>(null);
   const [enhancementBusy, setEnhancementBusy] = useState(false);
   const [connected, setConnected] = useState(false);
   const [prompt, setPrompt] = useState("");
@@ -779,7 +782,7 @@ export default function Home() {
       setView("edit");
     } else {
       setSeed(String(value));
-      setEnhancementMode(false);
+      setEnhancementMode(false); setSwapMode(false);
       setView("create");
     }
     setNotice(`已套用種子 ${value}，同樣設定下會重現相同的畫面。`);
@@ -799,11 +802,15 @@ export default function Home() {
   }
 
   async function redoVideo(video: GeneratedVideo) {
+    if (video.swapMode) {
+      setEnhancementMode(false); setSwapMode(true); setSwapWork({ ...video }); setView("create");
+      return;
+    }
     if (!video.prompt || !video.profile || !video.resolution || video.sound === undefined) {
       throw new Error("這支舊作品沒有保存完整生成設定，無法載入。 ");
     }
 
-    setEnhancementMode(false);
+    setEnhancementMode(false); setSwapMode(false);
     const warnings: string[] = [];
     const inferredSourceMode: SourceMode = video.inputMode === "reference"
       ? "reference"
@@ -908,7 +915,7 @@ export default function Home() {
 
   function extendVideo(video: GeneratedVideo) {
     if (!video.extendable || !video.profile || !video.resolution || video.sound === undefined || !video.width || !video.height) return;
-    setEnhancementMode(false);
+    setEnhancementMode(false); setSwapMode(false);
     setContinuationSource(video);
     setSourceMode(video.inputMode === "reference" ? "reference" : "text");
     setProfile(video.inputMode === "reference" ? video.profile === "cooled-fast" ? "fast" : video.profile : "quality");
@@ -1036,10 +1043,11 @@ export default function Home() {
             </div>
 
             <div className="mode-tabs" role="tablist" aria-label="生成來源">
-              <button className={!enhancementMode && sourceMode === "text" ? "active" : ""} onClick={() => { setEnhancementMode(false); chooseSourceMode("text"); }} disabled={Boolean(continuationSource) || isGeneratingH3Image || enhancementBusy}>文字轉影片</button>
-              <button className={!enhancementMode && sourceMode === "image" ? "active" : ""} onClick={() => { setEnhancementMode(false); chooseSourceMode("image"); }} disabled={Boolean(continuationSource) || isGeneratingH3Image || enhancementBusy}>首尾圖生影片</button>
-              <button className={!enhancementMode && sourceMode === "reference" ? "active" : ""} onClick={() => { setEnhancementMode(false); chooseSourceMode("reference"); }} disabled={Boolean(continuationSource) || isGeneratingH3Image || enhancementBusy}>參考生影片</button>
-              <button className={enhancementMode ? "active" : ""} onClick={() => setEnhancementMode(true)} disabled={Boolean(continuationSource) || isGenerating || enhancementBusy}>影片畫質提升</button>
+              <button className={!enhancementMode && !swapMode && sourceMode === "text" ? "active" : ""} onClick={() => { setEnhancementMode(false); setSwapMode(false); chooseSourceMode("text"); }} disabled={Boolean(continuationSource) || isGeneratingH3Image || enhancementBusy}>文字轉影片</button>
+              <button className={!enhancementMode && !swapMode && sourceMode === "image" ? "active" : ""} onClick={() => { setEnhancementMode(false); setSwapMode(false); chooseSourceMode("image"); }} disabled={Boolean(continuationSource) || isGeneratingH3Image || enhancementBusy}>首尾圖生影片</button>
+              <button className={!enhancementMode && !swapMode && sourceMode === "reference" ? "active" : ""} onClick={() => { setEnhancementMode(false); setSwapMode(false); chooseSourceMode("reference"); }} disabled={Boolean(continuationSource) || isGeneratingH3Image || enhancementBusy}>參考生影片</button>
+              <button className={swapMode ? "active" : ""} onClick={() => { setSwapMode(true); setEnhancementMode(false); }} disabled={Boolean(continuationSource) || isGeneratingH3Image || enhancementBusy}>影片換角</button>
+              <button className={enhancementMode ? "active" : ""} onClick={() => { setSwapMode(false); setEnhancementMode(true); }} disabled={Boolean(continuationSource) || isGenerating || enhancementBusy}>影片畫質提升</button>
             </div>
         </> : view === "edit" ? <div className="hero">
               <p className="eyebrow">QWEN-IMAGE 2.1 · LOCAL</p>
@@ -1048,9 +1056,12 @@ export default function Home() {
             </div> : null}
         <div className={`studio-workspace${generationJobs.length ? " with-queue" : ""}`}>
           <div className="studio-editor">
+        <div hidden={view !== "create" || !swapMode}>
+          <SwapStudio connected={connected} disabled={enhancementBusy || isGeneratingH3Image} enqueue={generationQueue.add} onComplete={() => void refreshHistory()} initialWork={swapWork} />
+        </div>
         {view === "create" ? (
           <>
-            {enhancementMode ? <EnhanceStudio videos={videoWorks} connected={connected} disabled={isGenerating} onBusyChange={setEnhancementBusy} onComplete={() => void refreshHistory()} /> : <>
+            {enhancementMode ? <EnhanceStudio videos={videoWorks} connected={connected} disabled={isGenerating} onBusyChange={setEnhancementBusy} onComplete={() => void refreshHistory()} /> : swapMode ? null : <>
             <section className="composer" aria-label="影片生成設定">
               {continuationSource && (
                 <div className="continuation-banner">
@@ -1927,6 +1938,7 @@ function VideoGrid({ videos, onDelete, onExtend, onRedo, onReuseSeed, emptyText 
               <div className="video-meta">
                 <span title={video.filename}>{video.filename}</span>
                 {video.enhanced && <small title={`來源：${video.enhancementSource}`}>畫質提升 · 720p · {video.enhancementStrength}%</small>}
+                {video.swapMode && <small title={`來源：${video.swapSource}`}>{video.swapMode === "head" ? "換頭" : "整個角色替換"} · {video.steps} 步 · {video.swapCompletedSegments}／{video.swapTotalSegments} 段</small>}
                 {video.generationSeconds !== undefined && <small>耗時 {video.generationSeconds} 秒</small>}
                 {video.extraLoras?.length ? (
                   <small title={video.extraLoras.map((l) => `${l.name} @${l.strength}`).join(", ")}>
