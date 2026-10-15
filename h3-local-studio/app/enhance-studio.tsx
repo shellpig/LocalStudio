@@ -6,10 +6,11 @@ import { useEffect, useState } from "react";
 import { GeneratedVideo, outputUrl } from "@/lib/comfy";
 import { blendEnhancement, EnhancementInput, prepareEnhancement, runEnhancement } from "@/lib/enhance";
 
-export default function EnhanceStudio({ videos, connected, disabled, onBusyChange, onComplete }: {
+export default function EnhanceStudio({ videos, connected, disabled, executionDisabled, onBusyChange, onComplete }: {
   videos: GeneratedVideo[];
   connected: boolean;
   disabled: boolean;
+  executionDisabled: boolean;
   onBusyChange: (busy: boolean) => void;
   onComplete: () => void;
 }) {
@@ -77,7 +78,8 @@ export default function EnhanceStudio({ videos, connected, disabled, onBusyChang
       <label className="enhancement-check"><input type="checkbox" checked={segment} disabled={locked} onChange={(event) => { reset(); setSegment(event.target.checked); }} />先處理指定片段</label>
       {segment && <div className="enhancement-times"><label><span>開始時間（秒）</span><input type="number" min="0" step="0.1" value={start} disabled={locked} onChange={(event) => { reset(); setStart(Number(event.target.value)); }} /></label><label><span>片段長度（秒）</span><input type="number" min="0.1" max="15" step="0.1" value={duration} disabled={locked} onChange={(event) => { reset(); setDuration(Number(event.target.value)); }} /></label></div>}
       {cache?.raw && <p>AI 成品已保留，調整強度後只需重新混合。</p>}
-      <button className="generate-button" disabled={!connected || locked || !source || (segment && (!Number.isFinite(start) || start < 0 || !Number.isFinite(duration) || duration <= 0 || duration > 15))} onClick={() => void enhance()}>{busy ? `正在處理 · ${elapsed} 秒` : cache?.raw ? "套用強度並另存" : "開始提升畫質"}</button>
+      {executionDisabled && <p>可先設定，等待生成佇列完成後即可開始提升畫質。</p>}
+      <button className="generate-button" disabled={!connected || locked || executionDisabled || !source || (segment && (!Number.isFinite(start) || start < 0 || !Number.isFinite(duration) || duration <= 0 || duration > 15))} onClick={() => void enhance()}>{busy ? `正在處理 · ${elapsed} 秒` : cache?.raw ? "套用強度並另存" : "開始提升畫質"}</button>
       <p role="status">{status}</p>
       {error && <p className="error-message" role="alert">{error}</p>}
       {result && <div><h3>畫質提升 · 720p · {result.enhancementStrength}%</h3><video controls src={outputUrl(result)} aria-label="畫質提升成品" /><a href={outputUrl(result)} download={result.filename}>下載成品</a></div>}

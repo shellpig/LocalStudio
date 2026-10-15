@@ -216,7 +216,7 @@ test("adds Ref2VA references without replacing existing generation flows", async
   assert.doesNotMatch(page, /!reference\.description\.trim\(\)/);
   assert.match(page, /新增參考/);
   assert.match(page, /referenceImages\.length >= 9/);
-  assert.match(styles, /grid-template-columns: repeat\(4,1fr\)/);
+  assert.match(styles, /grid-template-columns: repeat\(6,1fr\)/);
   assert.match(comfy, /minimax_h3_ref2va_pruned_w4a8_mixed\.safetensors/);
   assert.match(comfy, /continuation \? "hybrid_auto" : "ref2va_full"/);
   assert.match(comfy, /attention_mode: "existing"/);

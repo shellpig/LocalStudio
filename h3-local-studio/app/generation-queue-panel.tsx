@@ -30,7 +30,7 @@ export default function GenerationQueuePanel({ jobs, elapsed, onRemove }: {
       <ol onScroll={() => setPopup(null)}>
         {jobs.map((job) => {
           const qwen = job.label.startsWith("Qwen 圖片 · ");
-          const type = qwen ? "Qwen 圖片" : "H3 影片";
+          const type = job.label.startsWith("RTX · ") ? "RTX 提升" : qwen ? "Qwen 圖片" : "H3 影片";
           const text = job.label.startsWith("延伸影片 · ")
             ? job.label.replace("延伸影片 · ", "延伸：")
             : job.label.slice(job.label.indexOf(" · ") + 3);

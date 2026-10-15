@@ -31,6 +31,10 @@ export type GenerationOptions = {
 };
 
 export type GeneratedVideo = {
+  rtxOperation?: "fps" | "upscale";
+  rtxMultiplier?: number;
+  rtxSource?: string;
+  fps?: number;
   swapMode?: "head" | "character";
   swapSource?: string;
   swapSourceFile?: string;
