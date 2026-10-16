@@ -8,60 +8,40 @@ fit; where names match, the low-rank shapes are compared too.
 
 With no arguments every file in ComfyUI\models\loras is checked.
 
-A LoRA whose names do not match is NOT rejected at run time: the loader calls
-comfy.lora.load_lora with log_missing=False, so the graph runs, patches nothing
-and produces an unchanged video. Check here first.
+Uses the same naming and shape checks as H3StudioLoRA. The reference is the
+unpruned Turbo LoRA; the runtime node checks the actual loaded model instead.
 """
 import sys
+import importlib.util
 from pathlib import Path
 
+import torch
 from safetensors import safe_open
 
 ROOT = Path(__file__).resolve().parent.parent
 LORA_DIR = ROOT / "ComfyUI" / "models" / "loras"
 REFERENCE = LORA_DIR / "minimax_h3_turbo_v4_step600_ema.safetensors"
+spec = importlib.util.spec_from_file_location("h3_studio_lora", ROOT / "integrations/ComfyUI-H3-Studio/h3_studio_lora.py")
+loader = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(loader)
 
 
 def read(path):
-    """Map each LoRA module to the output dimension of its B matrix."""
-    shapes = {}
+    """Read shapes on the meta device; alpha values are not needed here."""
     with safe_open(str(path), framework="pt") as handle:
-        for key in handle.keys():
-            name = key[len("diffusion_model."):] if key.startswith("diffusion_model.") else key
-            if ".lora_" not in name:
-                continue
-            module, tail = name.rsplit(".lora_", 1)
-            if tail.startswith(("B", "up")):
-                shapes[module] = tuple(handle.get_slice(key).get_shape())
-    return shapes
+        return {key: torch.empty(handle.get_slice(key).get_shape(), device="meta") for key in handle.keys()}
 
 
 def report(path, reference):
     print(path.name)
     try:
-        shapes = read(path)
+        mapping, unmatched = loader.lora_key_map(read(path), reference)
     except Exception as error:
-        print(f"  unreadable: {type(error).__name__}: {error}\n")
+        print(f"  incompatible: {type(error).__name__}: {error}\n")
         return
-    if not shapes:
-        print("  no LoRA tensors found - this is not a LoRA file.\n")
-        return
-
-    shared = sorted(set(reference).intersection(shapes))
-    print(f"  {len(shapes)} LoRA modules, matches H3: {len(shared)} / {len(reference)}")
-    print(f"  sample module: {sorted(shapes)[0]}")
-
-    if not shared:
-        print("  VERDICT: incompatible. No module name exists in the H3 DiT.")
-        print("           H3 would patch 0 weights and change nothing - silently.\n")
-        return
-
-    mismatched = [m for m in shared if shapes[m][0] != reference[m][0]]
-    if len(shared) < len(reference) * 0.5:
-        print(f"  VERDICT: partial. It covers only {len(shared)} of the DiT's {len(reference)} modules. Not usable.\n")
-    elif mismatched:
-        print(f"  VERDICT: names fit but {len(mismatched)} shapes differ, e.g. {mismatched[0]} "
-              f"{shapes[mismatched[0]]} vs {reference[mismatched[0]]}. Not usable.\n")
+    print(f"  matches H3: {len(mapping)} modules; unmatched: {len(unmatched)}")
+    if unmatched:
+        print(f"  VERDICT: partial; unmatched modules: {', '.join(unmatched)}\n")
     else:
         print("  VERDICT: names and shapes both fit. Worth a real test render.\n")
 
@@ -69,7 +49,14 @@ def report(path, reference):
 def main(argv):
     if not REFERENCE.exists():
         sys.exit(f"H3 reference LoRA missing: {REFERENCE}")
-    reference = read(REFERENCE)
+    tensors = read(REFERENCE)
+    reference = {}
+    for key, down in tensors.items():
+        if not key.endswith(".lora_A.weight"):
+            continue
+        module = key[:-len(".lora_A.weight")].removeprefix("diffusion_model.")
+        up = tensors[key.replace(".lora_A.weight", ".lora_B.weight")]
+        reference[f"diffusion_model.{module}.weight"] = torch.empty((up.shape[0], down.shape[1]), device="meta")
     print(f"H3 reference: {len(reference)} modules ({REFERENCE.name})\n")
 
     targets = [Path(item) for item in argv] if argv else sorted(

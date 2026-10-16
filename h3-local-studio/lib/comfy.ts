@@ -265,7 +265,7 @@ export function resolveGenerationDimensions(options: GenerationOptions): [number
 /**
  * Chains the extra LoRAs after `source` and returns the new model link.
  *
- * Every node is forced to merge (low_vram). The bypass path stores its adapters
+ * Extra nodes merge their patches. The bypass path stores its adapters
  * under one shared injection key, so a second bypass node would overwrite the
  * first and silently drop it. Merge uses add_patches, which accumulates.
  */
@@ -273,8 +273,8 @@ function stackExtraLoras(graph: PromptGraph, extras: ExtraLora[], source: [strin
   let model = source;
   extras.forEach((extra, index) => {
     const id = String(600 + index);
-    graph[id] = node("MiniMaxH3TurboLoRA", {
-      model, lora_name: extra.name, strength: extra.strength, low_vram: true,
+    graph[id] = node("H3StudioLoRA", {
+      model, lora_name: extra.name, strength: extra.strength,
     }, `額外 LoRA ${index + 1}`);
     model = [id, 0];
   });
@@ -711,7 +711,7 @@ function referenceMetadataFromHistory(entry: { prompt?: unknown }) {
 
 function extraLorasFromGraph(graph: PromptGraph): ExtraLora[] | undefined {
   const found = Object.values(graph)
-    .filter((item) => item.class_type === "MiniMaxH3TurboLoRA" && item.inputs.lora_name !== TURBO_LORA)
+    .filter((item) => ["MiniMaxH3TurboLoRA", "H3StudioLoRA"].includes(item.class_type) && item.inputs.lora_name !== TURBO_LORA)
     .map((item) => ({ name: String(item.inputs.lora_name), strength: Number(item.inputs.strength) }));
   return found.length ? found : undefined;
 }
@@ -805,9 +805,9 @@ function videosFromHistory(history: Record<string, unknown>, kind: "video" | "im
 
 /** The LoRAs ComfyUI can load, minus the Turbo LoRA the workflow always applies. */
 export async function getAvailableLoras(): Promise<string[]> {
-  const response = await request("/object_info/MiniMaxH3TurboLoRA");
+  const response = await request("/object_info/H3StudioLoRA");
   const info = (await response.json()) as Record<string, { input?: { required?: { lora_name?: unknown[] } } }>;
-  const names = info.MiniMaxH3TurboLoRA?.input?.required?.lora_name?.[0];
+  const names = info.H3StudioLoRA?.input?.required?.lora_name?.[0];
   return Array.isArray(names) ? names.filter((name): name is string => typeof name === "string" && name !== TURBO_LORA) : [];
 }
 

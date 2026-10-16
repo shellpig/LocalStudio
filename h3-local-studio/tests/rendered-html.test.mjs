@@ -101,6 +101,31 @@ test("reference history recovers frame anchors independently from reference imag
   }
 });
 
+test("history restores extra LoRAs from both legacy and compatible loader nodes", async () => {
+  const { buildWorkflow, getRecentVideos, getAvailableLoras } = await import(new URL("../lib/comfy.ts", import.meta.url));
+  const extras = [{ name: "MysticXXX_MMH3-V1.safetensors", strength: 0.5 }];
+  const previousFetch = globalThis.fetch;
+  try {
+    for (const loader of ["MiniMaxH3TurboLoRA", "H3StudioLoRA"]) {
+      const graph = buildWorkflow({ prompt: "A person walks.", profile: "fast", resolution: "p480", duration: 5, aspect: "16:9", sound: true, extraLoras: extras });
+      graph["600"].class_type = loader;
+      const output = { filename: "lora-test.mp4", subfolder: "video", type: "output" };
+      globalThis.fetch = async (url) => Response.json(String(url).includes("/history")
+        ? { "lora-test": { prompt: [0, "lora-test", graph], outputs: { "92": { images: [output] } } } }
+        : { outputs: [output] });
+      const [video] = await getRecentVideos();
+      assert.deepEqual(video.extraLoras, extras);
+    }
+    globalThis.fetch = async (url) => {
+      assert.match(String(url), /\/object_info\/H3StudioLoRA$/);
+      return Response.json({ H3StudioLoRA: { input: { required: { lora_name: [[extras[0].name, "minimax_h3_turbo_v4_step600_ema.safetensors"]] } } } });
+    };
+    assert.deepEqual(await getAvailableLoras(), [extras[0].name]);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 async function render() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
@@ -475,7 +500,7 @@ test("stacks any number of extra LoRAs after the Turbo LoRA", async () => {
   ];
 
   const chainOf = (graph, start) => {
-    const follow = new Set(["MiniMaxH3TurboLoRA", "MiniMaxH3MemoryEfficientSageAttentionPatch"]);
+    const follow = new Set(["MiniMaxH3TurboLoRA", "H3StudioLoRA", "MiniMaxH3MemoryEfficientSageAttentionPatch"]);
     const out = [];
     let current = start;
     for (;;) {
@@ -496,7 +521,11 @@ test("stacks any number of extra LoRAs after the Turbo LoRA", async () => {
     assert.equal(graph["601"].inputs.strength, 0.4);
     // Bypass keeps its adapters under one shared injection key, so a second
     // bypass node would overwrite the first. Stacking must merge throughout.
-    for (const id of ["120", "600", "601", "602"]) assert.equal(graph[id].inputs.low_vram, true);
+    assert.equal(graph["120"].inputs.low_vram, true);
+    for (const id of ["600", "601", "602"]) {
+      assert.equal(graph[id].class_type, "H3StudioLoRA");
+      assert.equal(graph[id].inputs.low_vram, undefined);
+    }
   }
 
   // Untouched when the feature is unused: the Turbo LoRA keeps its bypass path.
