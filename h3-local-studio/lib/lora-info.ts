@@ -44,7 +44,7 @@ const catalog: Record<string, LoraInfo> = {
   },
   "MysticXXX_MMH3-V1.safetensors": {
     description: "改善成人題材的人體與解剖外觀；V1 主要著重身體結構。",
-    weight: "0.75–0.8：V1 作者建議。",
+    weight: "0.5：建議權重。",
     note: compatibleNote,
   },
   "bounceV03-000084.safetensors": { ...bounce, note: `較早的 H3 Ref2VA 版本。${compatibleNote}` },
