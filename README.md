@@ -1,6 +1,6 @@
 # H3 Local Studio
 
-Windows 本機版 MiniMax H3 影片製作介面。影片、Qwen 圖像與 SeedVR2 畫質提升由本機 ComfyUI 執行。可選的 Prompt 優化會透過 Codex／Grok CLI 使用外部服務，並提供提示詞及所選圖片；語音生成與聲線試聽使用 Google Gemini API。
+Windows 本機版 MiniMax H3 影片製作介面。影片、Qwen 圖像、SeedVR2 與 RTX 畫質提升在本機執行；語音可選 Drama3 本機多人配音，或使用 Google Gemini API。可選的 Prompt 優化會透過 Codex／Grok CLI 使用外部服務，並提供提示詞及所選圖片。
 
 ## 功能
 
@@ -11,10 +11,14 @@ Windows 本機版 MiniMax H3 影片製作介面。影片、Qwen 圖像與 SeedVR
 - 官方 H3 Prompt 優化：把一句白話描述改寫成 MiniMax 官方格式，可選 Codex 或 Grok 執行
 - 圖像編輯（Qwen-Image 2.1）：原版、Noct Q V4、REDQW21 UNLOCKED V2 三種主模型可切換；文字生圖或上傳最多 4 張圖編輯，支援 7 種比例與 2K。編輯預設依第一張圖比例，指定比例時先裁切第一張圖
 - 語音生成（Gemini 3.8 TTS，雲端，可選）：文字轉 WAV，30 個預設聲線加上可搜尋、試聽的 Google 聲線庫
+- 語音生成（Drama3，本機，可選）：最多 16 個角色、逐段台詞與表演提示，支援參考音訊辨識、保存聲線、試聽、FLAC 下載與再做一次；使用時啟動獨立服務，工作結束後關閉程序釋放記憶體
 - 攝影機視角：Qwen 圖像搭配 Multiple-Angles LoRA v2，支援方位、角度、景別與強度
 - 影片換角：BFS 換頭（臉部＋髮型）或整個角色替換（4／6／8／20 步），另可選 Akatz V1.5 整個角色替換（20 步）；支援 480P／540P／原生 H3，沿用來源影片比例並合回原音軌
+- 人臉精修：作品可逐鏡頭預覽選臉，首尾圖／參考生影片可勾選生成後自動精修；支援原生 20 步、快速 8 步及多人逐組修復，保留原片並另存成品
 - 影片畫質提升：SeedVR2 3B INT8，另存 720p 作品，保留原比例、幀率與聲音
-- H3 影片與 Qwen 圖片共用生成佇列，按下生成時保存設定與圖片，依序執行
+- RTX 提升：NVIDIA VFX SDK 補幀 2～16 倍，或超解析 2／3／4 倍，另存新影片，保留時長與聲音
+- H3 影片、Qwen 圖片、RTX 提升與 Drama3 工作共用生成佇列，按下生成時保存設定，依序執行
+- 額外 H3 LoRA：選單顯示用途、強度與觸發詞，支援社群常見權重命名及載入檢查
 - 作品列表、刪除、下載，並保存生成設定 metadata
 
 ---
@@ -25,12 +29,16 @@ Windows 本機版 MiniMax H3 影片製作介面。影片、Qwen 圖像與 SeedVR
 
 上述大小使用 Qwen 原版；另加 Noct Q V4 與 REDQW21 V2 兩個可選主模型需約 **13.5 GiB**，三款都保留時模型合計約 **87.8 GiB**。
 
+以上合計**不含**可選的 BFS／ORB360／其他社群 LoRA、RTX 套件與 Drama3 獨立環境。Drama3 的 W4A8 主模型、codec 與 0.6B ASR 三項合計約 **25.8 GiB（27.7 GB）**，還需另留 Python 套件、快取與成品空間；RTX 不另下載上述 safetensors 模型，使用 NVIDIA 提供的套件。
+
 | 缺少的東西 | 大小 | 為什麼不在倉庫裡 |
 |---|---:|---|
 | ComfyUI 本體 | 約 1 GB | 上游專案，另行 clone |
 | 四個第三方 ComfyUI 節點 | 約 50 MB | 各自有 repo 與授權 |
 | Python 虛擬環境 `.venv` | 約 8 GB | 含 PyTorch 與 CUDA 套件 |
-| 模型檔 | H3 約 54.2 GiB；全部功能約 74.3 GiB | 體積過大，見步驟 7 |
+| 模型檔 | H3 約 54.2 GiB；H3＋原版 Qwen＋SeedVR2 等約 74.3 GiB；Drama3 另加約 25.8 GiB | 體積過大，見步驟 7 |
+| Drama3 獨立 ComfyUI 與 venv | 模型外另需環境空間 | 位於 `services/Drama3/`，不納入 Git，見步驟 12 |
+| NVIDIA VFX SDK Python 套件 | 依平台 wheel 而異 | RTX 提升的可選依賴，見步驟 13 |
 | `h3-local-studio/node_modules` | 約 300 MB | 由 `npm install` 產生 |
 | FFmpeg | 約 150 MB | 系統層工具 |
 | Codex 或 Grok CLI | 小 | 需個人帳號登入 |
@@ -51,12 +59,15 @@ Windows 本機版 MiniMax H3 影片製作介面。影片、Qwen 圖像與 SeedVR
 | H3 QUALITY、一般影片動態延伸 | 上述模型，另加 FP16 影片 VAE | Motion Context 節點 |
 | H3 參考生影片（4步／6步／8步） | H3 共用三項、Ref2VA W4A8 模型、Turbo LoRA | LongMedia 節點；最多 9 張參考圖 |
 | 影片換角（BFS／Akatz V1.5） | H3 共用三項、Ref2VA W4A8 模型、所選換角 LoRA；BFS 4／6／8 步另需 Turbo LoRA，Akatz V1.5 使用 20 步 | 既有 H3／KJNodes 節點與 FFmpeg；BFS 另使用 H3 原生 Add Guide |
+| 人臉精修（手動／生成後自動／多人） | H3 共用文字編碼器、聲音 VAE、Ref2VA W4A8 模型、FP16 影片 VAE；快速 8 步另需 Turbo LoRA | 步驟 14 的 FaceRefine、NativeAudioLock 節點與人臉偵測器；FFmpeg |
 | Qwen 文字生圖／圖像編輯 | Qwen 三項 | 使用 ComfyUI v0.37.0 |
 | Qwen 攝影機視角 | Qwen 三項、攝影機 LoRA | 只上傳一張原圖 |
 | 影片畫質提升（AI 強度大於 0%） | SeedVR2 兩項 | ComfyUI v0.37.0 的內建 SeedVR2 節點、FFmpeg |
 | H3 Prompt 優化 | 不需要額外生成模型 | Codex 或 Grok 登入，加上外部 Prompt skill |
 | Qwen 提示詞優化 | 不需要額外生成模型 | 固定使用 Codex CLI，不使用 H3 Prompt skill |
 | Gemini 語音生成 | 不需要本機生成模型 | 步驟 11 的 API 金鑰 |
+| Drama3 本機多人配音 | Drama3 W4A8、codec；辨識逐字稿另需 0.6B ASR | 步驟 12 的獨立 ComfyUI v0.40.0 與 venv，不使用 Gemini 金鑰 |
+| RTX 補幀／超解析 | 不需要額外的 safetensors 模型 | 步驟 13 的 `nvidia-vfx`、FFmpeg；補幀需 RTX 40 系列或更新 |
 
 目前指南固定主要套件與節點到本機使用的版本；第三方 requirements 中的其他相依套件仍由 pip 解析。本指南已核對原始碼、版本與下載來源，尚未在另一台乾淨電腦完成全流程重裝。
 
@@ -67,7 +78,7 @@ Windows 本機版 MiniMax H3 影片製作介面。影片、Qwen 圖像與 SeedVR
 | 作業系統 | Windows 10 / 11 | Windows 11 |
 | GPU | NVIDIA，**VRAM 12 GB 以上** | RTX 4080 Laptop 12 GB |
 | 系統 RAM | **32 GB 以上** | 32 GB |
-| 硬碟空閒空間 | H3 建議至少 80 GB；全部功能建議至少 110 GB，作品與快取另計 | — |
+| 硬碟空閒空間 | H3 建議至少 80 GB；H3＋原版 Qwen＋SeedVR2 建議至少 110 GB；其他模型、Drama3 環境、作品與快取另計 | — |
 | NVIDIA 驅動 | 支援 CUDA 13.0 | 591.86 |
 
 先安裝 Git、Python **3.11（64-bit）** 與 Node.js **24.15.0 或相容的 24.x LTS**。來源：[Git for Windows](https://git-scm.com/downloads/win)、[Python Windows 下載](https://www.python.org/downloads/windows/)、[Node.js 下載](https://nodejs.org/en/download)。Python 需包含 `py` launcher，Git 與 Node.js 需加入 PATH。若使用官方 Python install manager，先執行 `py install 3.11` 安裝 3.11 runtime；使用傳統 installer 時，選 64-bit Python 3.11 並安裝 launcher。
@@ -82,6 +93,8 @@ npm --version
 ```
 
 **RAM 提醒：** H3 單次生成可能需要讀取約 40 GB 的模型權重，超過 32 GB 實體記憶體。系統會把記憶體對映的權重換出，取樣時再從硬碟讀回。**強烈建議把整個專案放在內接 NVMe，不要放在 USB 外接硬碟。** 放外接碟時實測讀取延遲會達到 300 毫秒，GPU 使用率掉到 20% 以下，生成時間會從 1 分鐘變成 10 分鐘以上。
+
+**Drama3 另有記憶體需求：** 目前採 W4A8、experts 放系統 RAM，主模型檔約 24.6 GB；即使只有一句話，也需準備整套模型。上游列 W4A8 約需 32 GB RAM，這不代表 32 GB 機器同時開其他軟體仍能順暢執行。本機 32 GB 曾在生成時只剩約 200 MB 可用 RAM 並大量讀入磁碟頁面，數秒音訊可耗時數分鐘。工作完成後退出 Drama3 服務只解決閒置占用，不代表生成速度已改善。
 
 ## 步驟 1：取得倉庫
 
@@ -201,7 +214,7 @@ Get-Item ".\ComfyUI\custom_nodes\ComfyUI-H3-Studio" -Force | Select-Object LinkT
 
 ## 步驟 7：下載模型
 
-以下每個檔名都有**直接下載連結**，固定到 2026-10-11 核對的上游 revision。只下載要用的功能；不要 clone 整個模型倉庫，也不要將不同版本的同名模型互換。下載後的檔名與目錄必須和表格一致。若目錄尚不存在，先建立：
+以下模型提供**直接下載連結**；原有 H3／Qwen／SeedVR2 表格固定到 2026-10-11 核對的 revision，後續新增項目以各節標示的核對日期與版本為準。只下載要用的功能；不要 clone 整個模型倉庫，也不要將不同版本的同名模型互換。下載後的檔名與目錄必須和表格一致。若主 ComfyUI 的模型目錄尚不存在，先建立：
 
 ```powershell
 New-Item -ItemType Directory -Force -Path .\ComfyUI\models\diffusion_models, .\ComfyUI\models\text_encoders, .\ComfyUI\models\vae, .\ComfyUI\models\loras | Out-Null
@@ -313,6 +326,39 @@ Akatz 版本、授權與作者設定見 [模型頁](https://huggingface.co/akatz
 
 AI 強度大於 0% 才需要這兩個模型。0% 使用 FFmpeg 普通放大，仍需要 FFmpeg／ffprobe。每次最多處理約 15 秒，建議先以 3 秒片段驗證；保留原比例、幀率與聲音，另存新作品，不支援再以 H3 動態延伸。強度混合可以重用已生成的 AI 快取。
 
+### Drama3 本機語音（可選，2026-10-17 新增）
+
+使用與 H3 **不同的 ComfyUI 與 Python 環境**。**先完成步驟 12 的環境 clone，再回來下載**；不要先在尚未 clone 的 `services/Drama3/ComfyUI` 建立模型目錄，否則 Git 會因目的地非空而拒絕 clone。以下是 Studio 程式目前指定的三個檔名；上游還有 FP8、INT8、W6A8 與 1.7B ASR，不能只換檔名就視為相同版本。下載連結固定到 2026-10-17 核對的 Hugging Face revision。
+
+| 本機檔名／下載連結 | 用途 | 放置目錄（專案根目錄起算） | 大小 |
+|---|---|---|---:|
+| [`drama3_w4a8experts_bf16.safetensors`](https://huggingface.co/PedroMarinhoDev/Drama-3-ComfyUI/resolve/681e2fae64af1f12e64b9c19c82930a5f3bba1a4/drama3_w4a8experts_bf16.safetensors) | Drama3 文字轉語音 | `services/Drama3/ComfyUI/models/diffusion_models/` | 24.60 GB／22.91 GiB |
+| [`drama3_codec.safetensors`](https://huggingface.co/PedroMarinhoDev/Drama-3-ComfyUI/resolve/681e2fae64af1f12e64b9c19c82930a5f3bba1a4/drama3_codec.safetensors) | 聲線編碼與音訊解碼 | `services/Drama3/ComfyUI/models/vae/` | 1.57 GB／1.46 GiB |
+| [`qwen3_asr_0.6b_bf16.safetensors`](https://huggingface.co/PedroMarinhoDev/Qwen3-ASR-ComfyUI/resolve/6ad8c9be026925839479a8d97749068a4202fbe9/qwen3_asr_0.6b_bf16.safetensors) | 參考音訊逐字稿辨識 | `services/Drama3/ComfyUI/models/asr/` | 1.56 GB／1.46 GiB |
+
+前兩項是配音／試聽所需；第三項只在按「辨識逐字稿」時使用，手動輸入正確逐字稿可省略 ASR。不要放進主 H3 的 `ComfyUI/models/`。下載來源：[Drama3 轉換模型倉庫](https://huggingface.co/PedroMarinhoDev/Drama-3-ComfyUI)、[Qwen3-ASR 轉換模型倉庫](https://huggingface.co/PedroMarinhoDev/Qwen3-ASR-ComfyUI)。
+
+SHA256（依上游檔案資訊）：
+
+```text
+drama3_w4a8experts_bf16.safetensors
+18fea6b8194f03c639098c93db5e4fc886e190e6b08e6eb69f9501f9703d7274
+
+drama3_codec.safetensors
+4fecf102907a48414230da9a74d72d07c3a92368eab53fab655797837bddf5ae
+
+qwen3_asr_0.6b_bf16.safetensors
+eb350ce7510a538eb136d8320db470a0761713c47de6e12b0fca090d4fc15ecf
+```
+
+例如下載主模型（codec／ASR 可從表格連結下載到各自目錄）：
+
+```powershell
+New-Item -ItemType Directory -Force -Path .\services\Drama3\ComfyUI\models\diffusion_models, .\services\Drama3\ComfyUI\models\vae, .\services\Drama3\ComfyUI\models\asr | Out-Null
+curl.exe -L --fail --retry 3 -C - "https://huggingface.co/PedroMarinhoDev/Drama-3-ComfyUI/resolve/681e2fae64af1f12e64b9c19c82930a5f3bba1a4/drama3_w4a8experts_bf16.safetensors" -o ".\services\Drama3\ComfyUI\models\diffusion_models\drama3_w4a8experts_bf16.safetensors"
+Get-FileHash .\services\Drama3\ComfyUI\models\diffusion_models\drama3_w4a8experts_bf16.safetensors -Algorithm SHA256
+```
+
 ### 檔案驗證
 
 不要只以檔案存在判定下載成功；中斷下載、HTML 錯誤頁或 Git LFS pointer 都不是真正的模型。先檢查大小，再以 SHA256 比對指定來源。
@@ -379,12 +425,13 @@ cd ..
 cd h3-local-studio; npm test; cd ..
 ```
 
-截至 2026-10-11，最近一次完整測試紀錄是 **27 項、25 通過、2 失敗**，失敗都在 `tests/rendered-html.test.mjs`：
+2026-10-17 本次文件核對重新執行 `npm test`：**建置通過，42 項測試中 39 通過、3 失敗**，失敗都在 `tests/rendered-html.test.mjs`：
 
 - `keeps Motion Context continuation wiring intact`：仍要求舊的固定「12 秒」降溫文案；目前介面使用可調秒數與動態估算。
+- `crops reference and keyframe images without altering the chosen file`：仍要求 Qwen 一律自由裁切的舊寫法，未包含現在第一張參考圖依指定編輯比例裁切的分支。
 - `reuses an exact seed and reports the seed of finished videos`：只接受舊的 `reuseSeed(value: number)`，未接受目前增加的可選 `source` 參數。
 
-這兩個失敗點是過時的原始碼文字斷言，不能據此判定生成或種子功能故障；但失敗後的同一測試其餘斷言未執行，不能宣稱整套驗證通過。修正與完整重跑需另行處理。
+這三項是原始碼文字斷言與目前程式不一致，不能據此直接判定生成、裁切或種子功能故障；但失敗後的同一測試其餘斷言未執行，不能宣稱整套驗證通過。本次只補文件，未修改測試或功能程式。
 
 新安裝先用 `npm run build` 確認介面能建置，再按「安裝完成後的驗證」逐項測試。測試失敗不代表應改回舊模式或舊版 ComfyUI。
 
@@ -495,6 +542,107 @@ H3 Studio 的 `h3_studio_api.py` 會指名 `$h3-prompt-writing`，並由 `valida
 
 ---
 
+## 步驟 12：Drama3 獨立環境（可選）
+
+Drama3 使用 `services/Drama3/.venv` 與 `services/Drama3/ComfyUI`，埠為 **8190**；主 H3 仍使用根目錄 `.venv`、`ComfyUI` 與 8188。不要為了 Drama3 直接升級或覆寫主 H3 環境。
+
+### 新安裝
+
+先完成主 H3 的 Python、FFmpeg 與 Studio 整合設定。以下從專案根目錄執行，建立獨立環境；目錄已存在時不要覆蓋，改依下一節處理既有安裝。
+
+```powershell
+New-Item -ItemType Directory -Force -Path .\services\Drama3 | Out-Null
+.\.venv\Scripts\python.exe -m venv .\services\Drama3\.venv
+.\services\Drama3\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\services\Drama3\.venv\Scripts\python.exe -m pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cu130
+git clone https://github.com/comfyanonymous/ComfyUI.git services/Drama3/ComfyUI
+git -C services/Drama3/ComfyUI checkout 3541246a9c997f4b8c32f9f88f3c985d02021c79
+.\services\Drama3\.venv\Scripts\python.exe -m pip install -r .\services\Drama3\ComfyUI\requirements.txt
+git clone https://github.com/PedroMarinhoDev/ComfyUI-Drama3.git services/Drama3/ComfyUI/custom_nodes/ComfyUI-Drama3
+git -C services/Drama3/ComfyUI/custom_nodes/ComfyUI-Drama3 checkout 66c4fb9cd3c0151e1e2ccd207847cb8335e87ab4
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\install_drama3_studio.ps1
+.\services\Drama3\.venv\Scripts\python.exe -m pip check
+```
+
+這是本機使用的 ComfyUI **v0.40.0** 與 Drama3 節點 commit；其 requirements 包含 `comfy-kitchen==0.2.37` 與 `comfy-aimdo==0.5.6`。主 H3 安裝指南仍固定 v0.37.0。Drama3 節點不另附需安裝的 requirements，沿用獨立 ComfyUI 環境。以上新安裝步驟依現有環境整理，尚未在乾淨電腦完成全流程重裝。
+
+`install_drama3_studio.ps1` **只建立 Studio 轉接節點的 junction**，不會替你安裝 Python、ComfyUI 或下載模型。完成後，依步驟 7 的 Drama3 表格下載模型，並重新啟動主 H3 ComfyUI，讓它載入新增的語音 API。
+
+### 已有其他位置的 Drama3 安裝
+
+可選擇複製既有完整環境，與上面的新安裝擇一；目的地 `services/Drama3` 必須尚不存在：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\migrate_drama3.ps1 -Source "D:\ExistingDrama3"
+.\.venv\Scripts\python.exe .\tools\verify_drama3_copy.py "D:\ExistingDrama3"
+```
+
+來源目錄須包含 `ComfyUI/main.py` 與 `.venv/Lib/site-packages/torch`。遷移採複製，保留原安裝，重建本專案 venv 的命令入口，再連結 Studio 節點。驗證工具比對套件版本、模型／input／output／user 的檔案與 SHA256、原生 DLL／PYD，並寫入 `services/Drama3/migration-integrity.json`；大型模型校驗需要時間。請在目的地新增聲線或作品之前驗證，否則新增檔案也會造成清單不一致。
+
+### 啟停與驗證
+
+Studio 的 Drama3 工作會自動啟動 8190，完成、失敗或取消後嘗試關閉該服務，等待程序退出才結束佇列任務。聲線清單在待命時仍可讀取；既有 FLAC 由主 H3 後端提供，不需讓 Drama3 常駐。手動除錯可用：
+
+```powershell
+.\start_drama3.bat
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\drama3_service.ps1 -Action Status
+Invoke-RestMethod 'http://127.0.0.1:8190/drama3-studio/runtime'
+.\stop_drama3.bat
+Invoke-RestMethod 'http://127.0.0.1:8188/h3-studio/drama3/status'
+```
+
+手動啟動後 runtime 的 `comfyRoot` 應指向本專案的 `services/Drama3/ComfyUI`；停止後 8190 無回應是正常情況，主 H3 的語音 status 應為 `ready: true`、`standby: true`。不要讓別套 ComfyUI 占用 8190。停止腳本遇到仍在生成／排隊的工作會拒絕停止；先在 Studio 按停止，等清理完成。
+
+日誌位於 `services/Drama3/run/server-8190.stdout.log` 與 `server-8190.stderr.log`。目前啟動參數包含 `--disable-pinned-memory`，生成使用 experts in RAM、2 GiB expert GPU 快取；這是現行配置，並非效能最佳化結論。
+
+## 步驟 13：RTX 提升套件（可選）
+
+RTX 提升使用 **主 H3 的 `.venv`**，不裝進 Drama3 環境。需要 FFmpeg／ffprobe、NVIDIA CUDA GPU 與相容驅動；Studio 的補幀操作另外檢查 GPU compute capability 至少 8.9（RTX 40 系列或更新）。
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install nvidia-vfx==0.2.0.0 --extra-index-url https://pypi.nvidia.com
+.\.venv\Scripts\python.exe -c "import nvvfx; print(nvvfx.__version__); print(nvvfx.get_sdk_version()); print(nvvfx.VideoSuperRes, nvvfx.VideoFrameGeneration)"
+.\.venv\Scripts\python.exe -m pip check
+```
+
+套件下載來源：[NVIDIA 套件索引](https://pypi.nvidia.com/nvidia-vfx/)、[0.2.0.0 套件說明](https://pypi.org/project/nvidia-vfx/0.2.0.0/)、[NVIDIA Python API 文件](https://docs.nvidia.com/maxine/vfx-python/latest/index.html)。本機使用 `nvidia-vfx 0.2.0.0`，對應 VFX SDK 1.3.0.0；Windows 執行庫隨 wheel 放在 `.venv/Lib/site-packages/nvvfx/libs/`。**不需另下載 SeedVR2 或把 RTX 權重放進 `ComfyUI/models/`。** Import 成功只驗證安裝，仍需短片實測效果。
+
+安裝與更新 Studio 後重新啟動主 ComfyUI，以載入 `H3StudioRTX` 節點與 `/h3-studio/rtx/*` API；用法見下方「RTX 提升」。
+
+---
+
+## 步驟 14：人臉精修（可選）
+
+先停止主 H3 ComfyUI（8188），再於專案根目錄執行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\install_h3_face.ps1
+```
+
+安裝器使用主專案的 `.venv`，安裝／檢查以下項目；若 8188 仍在監聽會拒絕執行。完成後重啟 ComfyUI、重新整理 Studio。
+
+| 項目 | 安裝內容／位置 |
+|---|---|
+| FaceRefine 節點 | `ComfyUI/custom_nodes/ComfyUI-H3-FaceRefine/`，固定 commit `d8521d14fe0d721d80cd9417fff5a559cbc21aba` |
+| NativeAudioLock 節點 | `ComfyUI/custom_nodes/ComfyUI-H3-NativeAudioLock/`，來源固定 commit `84895cfaaef39abb42fb844b02cb42f868c7bebf` |
+| 偵測與切鏡相依套件 | 包含 Ultralytics、PySceneDetect 與 OpenCV；版本依 `tools/install_h3_face.ps1` |
+| 人臉偵測器 | `ComfyUI/models/ultralytics/bbox/face_yolov8m.pt`，安裝器下載並核對 SHA256 |
+
+安裝器會以 `opencv-python==5.0.0.93` 取代 `opencv-python-headless`，兩者共用 `cv2`，不要同時保留。現有 FaceRefine 若不是指定 commit，安裝器會停止，須先檢查版本差異。此流程使用規則／逐鏡頭選臉與追蹤，不需 InsightFace。
+
+H3 模型仍須依步驟 7 另行下載：尤其是 `minimax_h3_video_vae_fp16.safetensors`，不能只裝一般快速影片使用的 INT8 VAE；另需 `minimax_h3_ref2va_pruned_w4a8_mixed.safetensors`、共用文字編碼器與聲音 VAE。快速 8 步還需 `minimax_h3_turbo_v4_step600_ema.safetensors`。精修不需要 BFS 或 Akatz 換角 LoRA。
+
+服務啟動後，可讀取模式所需節點、套件與模型的就緒狀態：
+
+```powershell
+Invoke-RestMethod 'http://127.0.0.1:8188/h3-studio/face/status'
+Invoke-RestMethod 'http://127.0.0.1:8188/h3-studio/face/status?mode=turbo-8&select=all_faces'
+```
+
+`ready: true` 只表示依賴已就緒，不能代替實際精修成片的效果驗證。操作見下方「人臉精修、自動精修與多人處理」。
+
+---
+
 # 啟動與停止
 
 啟動（會一併帶起 ComfyUI 與介面，並開啟瀏覽器）：
@@ -505,7 +653,9 @@ H3 Studio 的 `h3_studio_api.py` 會指名 `$h3-prompt-writing`，並由 `valida
 
 介面在 `http://localhost:3000`，ComfyUI API 在 `http://127.0.0.1:8188`。
 
-停止兩個服務：
+Drama3 不隨 Studio 啟動常駐；使用本機語音工作時才自動啟動 8190，工作結束後退出。第一次使用的服務啟動與模型準備時間也算等待時間。
+
+停止 Studio 與 H3（也會先嘗試停止本專案的 Drama3；Drama3 有工作時會拒絕繼續關閉）：
 
 ```powershell
 .\stop_h3_studio.bat
@@ -574,7 +724,10 @@ Invoke-RestMethod 'http://127.0.0.1:8188/h3-studio/outputs'
 - Qwen：先不加圖片，用短描述生成一張；再上傳一張圖驗證編輯。
 - 攝影機視角：開啟選項，只保留一張原圖，選方位、角度與景別，強度先用 0.8；確認 v2 LoRA 已列在 ComfyUI 的 LoRA 清單。
 - 畫質提升：從作品選一段約 3 秒影片，用 50% 強度驗證 720p 成品可播放、聲音與幀率有保留。
-- 語音：依步驟 11 設定金鑰後生成短句；未設定時停用按鈕是正常狀態。
+- Gemini 語音：切換到 Gemini 引擎，依步驟 11 設定金鑰後生成短句；未設定時停用按鈕是正常狀態。
+- Drama3 語音：依步驟 12 安裝，先建立／選擇聲線，再用一句台詞生成；確認 FLAC 可下載、設定可讀回，以及完成後 8190 程序退出。試聽只解碼參考聲音，不能代替文字生成測試。
+- RTX 提升：依步驟 13 安裝套件，以短片分別驗證 2 倍補幀與 2 倍超解析，檢查幀率／尺寸、時長、聲音及另存作品。
+- 人臉精修：依步驟 14 安裝，先以約 2～3 秒、24 fps 的作品，從「影片操作 → 人臉精修」預覽選臉並測試；確認原片仍在、精修另存，以及尺寸、幀率與原音軌有保留。自動精修及多人模式應分別驗證，單人成功不代表多人追蹤已正確。
 
 模型存在、API 已連線與 build 成功都不能代替這些實際功能驗證。
 
@@ -582,11 +735,13 @@ Invoke-RestMethod 'http://127.0.0.1:8188/h3-studio/outputs'
 
 # 生成佇列與模式
 
-H3 影片與 Qwen 圖片共用佇列：執行中可繼續編輯設定，按「加入佇列」時保存當下的提示詞、圖片與參數。等待任務可移除；失敗保留錯誤並繼續下一筆。Qwen 多張生成是一整筆任務，H3 也會等必要轉檔、合併與設定保存流程結束後才接下一筆。完成後留在目前頁面，作品可到「作品」頁查看。
+H3 影片（含 BFS 換角）、Qwen 圖片、RTX 提升與 Drama3 工作共用佇列：可編輯時按「加入佇列」會保存當下設定，等待任務可移除；失敗保留錯誤並繼續下一筆。Qwen 多張生成是一整筆任務，H3 會等必要轉檔、合併與設定保存流程結束後才接下一筆；Drama3 的生成、聲線試聽、辨識與保存聲線都會排隊，執行時鎖定其設定，關閉服務也屬於該筆工作。完成後留在目前頁面，作品可到「作品」頁查看。
 
 **佇列保存在目前瀏覽器頁面，不會持久保存。** 重新整理或關閉網頁會失去尚未執行的等待任務；已送到 ComfyUI 的 GPU 工作可能繼續，但瀏覽器負責的後處理／metadata 保存可能中斷。請等整筆完成再關閉頁面。ComfyUI 重啟也不提供任務續跑保證。
 
-右側顯示類型標籤與前約 10 字摘要，移上任務可查看完整提示詞與進度／錯誤；窄視窗時清單放到下方。H3「生成圖片」、SeedVR2 畫質提升與 Gemini TTS 不屬於這個共用佇列。
+人臉精修也使用這個佇列：手動精修是一筆工作，多人逐組修復在同筆工作內依序執行；生成後自動精修則與原始影片生成共用一筆工作，完成精修或回報失敗後才輪到下一筆。
+
+右側顯示類型標籤與前約 10 字摘要，移上或點選任務摘要可查看詳情與進度／錯誤。寬視窗使用右側清單，較窄視窗以「佇列」按鈕開啟浮動清單，可按「收合」或 Escape 關閉，不擠壓主編輯區。H3「生成圖片」、SeedVR2 畫質提升與 Gemini TTS 不屬於這個共用佇列。
 
 | H3 模式 | 目前行為 |
 |---|---|
@@ -631,9 +786,82 @@ BFS 來源影片透過 **Add Guide** 提供對齊的影片引導；Akatz V1.5 �
 
 ---
 
+# 人臉精修、自動精修與多人處理
+
+人臉精修會追蹤並裁切人臉，以 H3 局部重繪後合回來源畫面，目標是改善模糊臉部並保留原表情、視線、頭部姿勢與時序。這和「影片換角」是不同功能；精修以臉部區域合成，不提供整個角色或服裝替換。先完成安裝步驟 14。
+
+## 共用設定
+
+| 設定 | 選項與行為 |
+|---|---|
+| 精修模式 | **原生 20 步**（預設）：原片有聲音時加入音訊約束；**快速 8 步**：使用 Turbo，不做音訊約束。兩者最後都合回原音軌，但不保證口型精準同步 |
+| 修復人物 | 臉最大、最左側、最右側、最靠近中央，或「不只一名人物，逐人修復」；預設臉最大 |
+| 身份參考圖 | 單人模式從原始參考圖／首尾圖選一張；手動精修可補充清晰人物圖片。多人模式改為自動擷取各人物的原片人臉 |
+| 修復強度 | 介面提供 0.2／0.3／0.4，預設 0.4；強度越高可能改動越多，可先用 0.2～0.3 比較 |
+| 種子與降溫 | 沿用來源作品的種子與每步降溫；缺少時使用種子 42、預設降溫 15 秒，最低 5 秒，最後一步不暫停 |
+
+原生模式只在來源有音軌時使用音訊約束；快速模式會提示「不以原音訊約束嘴型」，說話鏡頭尤其需要檢查。精修會增加一次額外生成，8／20 步是精修階段本身的步數。
+
+## 手動精修：從作品預覽選臉
+
+1. 在「作品」或「最近作品」找到影片，展開「影片操作 → **人臉精修**」。來源須為約 **15 秒以內、24 fps** 的作品；先精修，再做 RTX 補幀。
+2. 選精修模式、人物規則、身份參考圖與強度。原作品沒有可用的人物參考圖時，可上傳「補充清晰人物參考圖」。
+3. 按「**偵測人臉並預覽**」。單人模式會列出各鏡頭的編號預覽；只有一張臉的鏡頭預選人臉 0，多張臉的鏡頭需手動指定，沒有目標的鏡頭選「略過此鏡頭」。至少選取一個鏡頭才能送出。
+4. 按「**加入精修佇列**」。精修和 H3／Qwen 等工作共用佇列；等待中的精修可以移除，執行時可按「停止精修」。
+5. 完成後原片保留，新增標示「人臉精修」的作品，記錄精修模式、步數、強度與來源。「再做一次」會開啟精修設定，重新偵測確認後再執行。
+
+## 自動精修：生成後接續修臉
+
+1. 在創作頁選「**首尾圖生影片**」或「**參考生影片**」，加入圖片與影片生成設定。
+2. 勾選「**生成後自動人臉精修**」，選精修模式、修復人物、身份參考圖與強度。單人身份參考可選已加入的參考圖、首幀或尾幀。
+3. 加入生成佇列後，同一筆工作依序執行「生成影片（1/2）→ 人臉精修（2/2）」，原片與其設定會先保存，再開始精修；完成整筆後才執行下一筆工作。
+4. 精修階段可按「**停止人臉精修（保留原片）**」。精修失敗或中止時原片仍可從作品列表使用，後續可從「影片操作」改為手動精修。
+
+此開關不提供給文字轉影片、影片延伸或「影片換角」頁。自動單人模式依各鏡頭首次出現時的人物規則選人，不會先停下來讓使用者逐鏡頭確認；多人交錯、目標人物不在每個鏡頭時，建議先生成，再從作品列表預覽選臉。
+
+## 多人處理：依原片人物逐組修復
+
+將「修復人物」設為「**不只一名人物，逐人修復**」，手動精修與自動精修都可使用。系統會偵測人臉軌跡，從原片各組人物擷取清晰人臉作為各自的身份參考，依序修復並接續上一組結果；這個模式不能替每個人物分別指定外部角色圖。
+
+手動精修先按「偵測人臉並預覽」，確認列出的「鏡頭／人物組」與自動擷取人臉，再加入精修佇列。軌跡需至少有 3 幀偵測；沒有可追蹤人物時，會要求改用單人模式預覽選臉。軌跡不跨越切鏡，同一個人在不同鏡頭可能計為不同組，組數不等於全片獨立人物數。
+
+每組各跑一次精修，耗時會隨組數增加。若停止或後續組失敗，已完成至少一組時會嘗試另存部分成品，錯誤訊息會列出檔名；作品記錄「已完成／總人物組數」。這不是斷點續跑，下次重新偵測與執行仍是新的任務。交錯、遮擋、快速移動或重新入鏡仍可能追錯／分成多組，不能視為跨鏡頭身份辨識。
+
+## 輸出、限制與驗證
+
+- 成品保留來源尺寸、24 fps、影格數與原音軌，另存於來源影片所在目錄的 `H3_Studio_Face_*.mp4`，旁邊保存 `.mp4.h3.json`；不覆蓋原片。來源為一般 Studio 影片時，通常位於 `ComfyUI/output/video/`。
+- 偵測／設定與多人參考圖快取位於 `ComfyUI/input/h3_face/`，精修中間影片位於 `ComfyUI/output/h3_face_cache/`。重新開啟或再做一次仍需要來源作品與身份參考圖存在。
+- 目前支援約 15 秒內的短片，**不會自動把長片分段精修**；非 24 fps 作品會拒絕處理，RTX 補幀後的影片應回到補幀前原片精修。精修成品不支援 H3 動態延伸，延伸請使用仍保留的原片。
+- 小臉、嚴重模糊、側臉、遮擋與追蹤失敗可能無法改善；局部合成也可能改變表情、身份或膚色，不能保證臉外區域逐像素不變。建議先用短片比較原片與成品。
+- 模型就緒、單元測試或介面測試成功不等於生成品質已驗證。原生／快速、單人／多人、說話鏡頭、不同尺寸與人物交錯應分別驗收，不宣稱全部組合已完成實測。
+
+---
+
+# RTX 提升
+
+創作頁選「RTX提升」，先依步驟 13 安裝 NVIDIA 套件。此功能使用 `H3StudioRTX`，與 SeedVR2「影片畫質提升」分開，不使用 SeedVR2 的強度混合或 720p 固定目標。
+
+| 功能 | 選項 | 輸出行為 |
+|---|---|---|
+| 提高 FPS（補幀） | 2～16 倍 | 例如 24 → 48 fps；尺寸不變，保留時長，採 MEDIUM 模式與自動切鏡偵測 |
+| 提高解析度（超解析） | 2／3／4 倍 | 寬與高各乘倍數並對齊 8 的倍數；幀率不變，採 ULTRA、strength 1.0 |
+
+1. 上傳 MP4／MOV／WebM（上限 1 GB），或選擇 Studio 影片作品。
+2. 選功能與倍數；來源資訊準備完成後會顯示預期尺寸／幀率。
+3. 按「開始 RTX 提升」或「加入佇列」。來源與參數在加入時保存，透過共用佇列依序執行。
+4. 完成後預覽／下載，也可在作品頁找到 `RTX 補幀` 或 `RTX 超解析` 標記。
+
+成品另存至 `ComfyUI/output/video/H3_Studio_RTX_*.mp4`，來源快取在 `ComfyUI/input/h3_rtx/`；保留來源音軌內容（重新編為 AAC），影片輸出為 H.264 MP4，並保存操作、倍數、來源及處理耗時 metadata。成品不支援 H3 動態延伸。只更新瀏覽器無法載入新後端節點，新增／更新此功能後須重啟主 ComfyUI。
+
+RTX 處理逐幀串流，沒有 SeedVR2 介面的約 15 秒上限，但長片、高解析度與高補幀倍數會增加處理時間與磁碟空間；支援選項不等於每種倍數與來源都已實測。這不是 NVIDIA 控制台對瀏覽器播放的即時增強設定。
+
+---
+
 # ORB360 環繞提示詞（可選）
 
 新增 `minimax_h3_orb360_step1500.safetensors` 對應的環繞提示詞功能：描述人物與場景保持靜止，只有攝影機順時針環繞一圈，再回到起始視角。此功能提供提示詞模板，實際生成是否完成一圈仍需檢查成品。
+
+下載：[作者模型頁](https://huggingface.co/MATLOWAI/MiniMax-H3-ORB360-CardSpin)／[step1500 固定版本直接下載](https://huggingface.co/MATLOWAI/MiniMax-H3-ORB360-CardSpin/resolve/de8aa4db6f9a0d949855f3dc62948ffc691aa6ce/minimax_h3_orb360_step1500.safetensors)。保留檔名，放在 `ComfyUI/models/loras/`；大小 596,450,168 bytes（約 569 MiB），不含在基本模型總量中。SHA256：`e9275b2f456f6bd004c9cb3cf5c636cad87217c5bc96e6a5b5533e917de121da`。
 
 1. 將 LoRA 放入 `ComfyUI/models/loras/`，重新整理 Studio。
 2. 在 H3 創作頁選「圖片轉影片」或「參考生影片」，上傳圖片。
@@ -661,13 +889,55 @@ BFS 來源影片透過 **Add Guide** 提供對齊的影片引導；Akatz V1.5 �
 
 在 H3 創作頁的「額外 LoRA」按「＋ 新增 LoRA」，選擇 `MysticXXX_MMH3-V1.safetensors`，將強度手動改成 **0.5**。新增列目前預設為 0.8，並未自動改成 0.5。Turbo 由影片模式自動套用，不需重複新增。
 
-**目前 Studio 的 V1 載入問題尚未修正，以上操作僅完成設定，不能視為 LoRA 已生效。** 2026-10-13 以相同 prompt、seed、6 步生成有／無 V1 的對照，兩段原片的畫面與音訊雜湊完全相同。唯讀診斷確認：V1 權重已有 `diffusion_model.` 前綴，額外 LoRA 使用的 `MiniMaxH3TurboLoRA` 節點又加了一次，導致 200 組 adapter 指向 `diffusion_model.diffusion_model.…`，無法匹配模型權重。需修正載入方式並重新驗證後，才能評估 V1 @ 0.5 的效果。
+**2026-10-17 已修正社群 LoRA 命名載入問題**（commit `f3522a5`）：額外 H3 LoRA 改用 `H3StudioLoRA`，支援帶／不帶 `diffusion_model.` 前綴及 `lora_unet_` 命名，接受 A／B 或 down／up 權重，並檢查配對、尺寸與實際模型目標。零匹配或權重套用不完整時會停止生成，部分未匹配項目會寫入警告。先前重複加前綴的問題已不是目前狀態，但修正命名不等於所有題材效果已經成片驗證。
+
+上述 **0.5 是本機測試設定**；選單另外顯示 V1 作者建議 0.75～0.8，可依目標調整。更新程式後須重啟主 ComfyUI，否則舊服務仍使用舊載入器。原版社群權重可直接使用，不必為了前綴另外製作 `_H3Studio`／`_FIXED` 檔；不要同時疊加同一 LoRA 的原版與轉換版。
+
+## 其他社群 H3 LoRA 與檢查工具
+
+「額外 LoRA」選單會針對已識別的檔名顯示用途、強度建議與觸發詞；未知檔名仍顯示未核對提示。說明資料來自程式內的檔名對照，不會自動下載權重，也不代表列在選單中的每款都已驗證生成效果。H3 LoRA 放 `ComfyUI/models/loras/`；Qwen 攝影機 LoRA 僅用在 Qwen，不能當作 H3 LoRA 使用。
+
+可先做不載入主模型的名稱／尺寸檢查：
+
+```powershell
+.\.venv\Scripts\python.exe .\tools\check_lora_h3.py
+.\.venv\Scripts\python.exe .\tools\check_lora_h3.py .\ComfyUI\models\loras\MysticXXX_MMH3-V1.safetensors
+```
+
+也可把 LoRA 拖到 `check_lora_h3.bat`。工具以已安裝的 Turbo LoRA 作為參考，只檢查權重名稱與尺寸；實際生成時 `H3StudioLoRA` 再對照當次主模型，最終效果需固定 prompt／seed 比較成片。Turbo 本身由影片模式自動套用，不需重複放進額外 LoRA。
+
+---
+
+# 語音生成（Drama3 本機多人配音）
+
+語音頁預設選「Drama3 · 本機多人配音」，可切到「Gemini · 雲端語音」。Drama3 不需要 API 金鑰，但需先完成步驟 12 的獨立環境與步驟 7 的模型下載。
+
+1. 設定角色名稱與已保存的聲線，最多 **16 個角色**。同一角色的台詞使用同一聲線；「開啟所在資料夾」可查看保存檔。
+2. 尚無聲線時，展開「新增聲線 · 上傳參考音訊」：上傳 **1～30 秒、32 MB 內**的單人清晰語音，接受 WAV／MP3／FLAC／M4A／OGG／WebM。
+3. 選中文／英文／日文／粵語／韓文，按「辨識逐字稿」後校正內容；也可直接手動輸入與參考聲音一致的逐字稿。填名稱並選角色，按「保存聲線並指派」。
+4. 對話劇本每列選角色、輸入台詞，使用 ↑／↓ 排序或「移除」。按鈕、角色與台詞採同列緊湊排列，文字框可拉高。最多 **100 段、每段 2,000 字元、合計 12,000 字元**。
+5. 可在台詞加入 `[sighs]`、`[laughs]`、`[whispers]` 等表演提示，或自然語言風格指示；角色由選單指定，不要手動輸入 `<|speaker:N|>` 等系統標記。表演效果仍需實際聆聽確認。
+6. 按「加入佇列 · 生成多人對話」。需要中斷時按「停止目前語音工作」；等待取消與程序退出後才會釋放佇列。完成後可播放、下載 FLAC，也會出現在作品頁「聲音」分類；「再做一次」載回角色、台詞與參數。
+
+**試聽與生成不同：** 角色旁「試聽」是從保存聲線還原原本的參考音訊，不會讓模型重新念目前台詞。同一聲線在目前頁面取得試聽後可直接重播，試聽不加入作品。因此試聽很快，不代表新台詞生成也會一樣快。
+
+| 資料 | 保存位置（專案根目錄起算） |
+|---|---|
+| 聲線（編碼＋逐字稿） | `services/Drama3/ComfyUI/output/drama3_voices/*.safetensors` |
+| 正規化參考音訊 | `services/Drama3/ComfyUI/input/H3_Drama3_ref_*.wav` |
+| Drama3 原始生成音訊 | `services/Drama3/ComfyUI/output/H3_Studio_Drama3/` |
+| 匯入 Studio 的成品與 metadata | `ComfyUI/output/H3_Drama3/H3_Drama3_*.flac` 及 `.flac.h3.json` |
+| 匯入 Studio 的聲線試聽 | `ComfyUI/output/H3_Drama3_Previews/` |
+
+進階設定預設 Temperature 1、Top P 0.9、Top K 30、每塊 1,290 frames（約 60 秒）；種子可留白隨機或填非負安全整數。長文依約 300 UTF-8 bytes 自動分塊，中文一句可能占多個 bytes；時長上限是**每塊**上限，不是整份劇本的總長，提早結束就不會跑滿上限。大幅縮小上限可能截斷台詞。
+
+目前會先釋放主 H3 的 GPU 模型，再啟動 Drama3；結果保存／匯入後關閉 8190 的 Python 程序，釋放模型與服務本身的記憶體。待命時顯示「Drama3 已待命」，不會為了讀取聲線清單常駐啟動。若關閉失敗會回報錯誤，不能把該筆當作已成功釋放；重啟主 H3 後端才會套用這套生命周期程式。已知本機生成效能與記憶體壓力見「效能參考」，尚未修復生成速度問題。
 
 ---
 
 # 語音生成（Gemini TTS）
 
-在雲端執行，不佔本機 GPU。需要先完成步驟 11。
+在語音頁切換「Gemini · 雲端語音」，於雲端執行，不佔本機 GPU。需要先完成步驟 11。
 
 語音生成頁上方左側顯示 API 金鑰狀態，右側是「Google Studio 生成」。按「開啟」會在瀏覽器新分頁打開 Google AI Studio 的 Generate Speech 頁，直接在 Google 網頁上試用 Gemini TTS：<https://aistudio.google.com/generate-speech>。此連結不需要先設定本機 API 金鑰。
 
@@ -700,14 +970,20 @@ MinimaxH3/                          ← Git 倉庫根目錄
 │  ├─ app/                          ← 介面
 │  ├─ lib/comfy.ts                  ← 工作流建構與 ComfyUI API 呼叫
 │  ├─ lib/tts.ts                    ← 語音生成 API 呼叫與預設聲線清單
+│  ├─ lib/drama3.ts                 ← 本機多人配音 API
+│  ├─ lib/rtx.ts                    ← RTX 提升 API 與佇列工作
 │  ├─ lib/enhance.ts                ← SeedVR2 工作流與畫質混合
 │  ├─ lib/generation-queue.ts       ← 瀏覽器內共用佇列
 │  └─ tests/
 ├─ integrations/
-│  └─ ComfyUI-H3-Studio/            ← Studio 自有的 ComfyUI 節點
+│  ├─ ComfyUI-Drama3-Studio/        ← 8190 的角色綁定／聲線轉接節點
+│  └─ ComfyUI-H3-Studio/            ← 8188 的 Studio 自有節點
 │     ├─ __init__.py
 │     ├─ h3_studio_api.py           ← /h3-studio/* API 路由
 │     ├─ h3_studio_tts.py           ← Gemini TTS 請求、驗證與試聽快取
+│     ├─ h3_studio_drama3.py        ← Drama3 工作、結果匯入與服務啟停
+│     ├─ h3_studio_rtx.py           ← NVIDIA RTX 補幀／超解析
+│     ├─ h3_studio_lora.py          ← 社群 H3 LoRA 載入檢查
 │     ├─ h3_studio_enhance.py       ← 影片準備、混合與畫質提升 API
 │     ├─ h3_cooled_turbo_sampler.py ← 兩個降溫用採樣節點
 │     └─ h3_prompt_output_schema.json
@@ -715,6 +991,8 @@ MinimaxH3/                          ← Git 倉庫根目錄
 ├─ start_h3_studio.bat
 ├─ start_comfyui_h3.bat
 ├─ stop_h3_studio.bat
+├─ start_drama3.bat / stop_drama3.bat ← 手動啟停獨立語音服務
+├─ tools/drama3_service.ps1         ← Drama3 安全啟停與身分檢查
 ├─ H3_BENCHMARK.md                  ← 實測數據
 ├─ H3_INSTALL_RESULT.md             ← 安裝結果紀錄
 │
@@ -722,6 +1000,14 @@ MinimaxH3/                          ← Git 倉庫根目錄
 │  ├─ custom_nodes/
 │  │  └─ ComfyUI-H3-Studio ─────────→ junction 指向 integrations/
 │  └─ models/                       ← 模型放這裡
+├─ services/Drama3/                 ← 不納入 Git，獨立語音環境
+│  ├─ .venv/                       ← Drama3 專用 Python
+│  ├─ run/                         ← 8190 服務日誌
+│  └─ ComfyUI/
+│     ├─ custom_nodes/ComfyUI-Drama3/
+│     ├─ custom_nodes/ComfyUI-Drama3-Studio → junction 指向 integrations/
+│     ├─ models/                   ← Drama3 主模型、codec、ASR
+│     └─ output/drama3_voices/      ← 已保存的角色聲線
 └─ .venv/                           ← 不納入 Git，自行建立
 ```
 
@@ -771,6 +1057,21 @@ Qwen 最後一步後不再降溫（直接解碼存圖）；H3 每步降溫則包
 
 ---
 
+### 2026-10-17：Drama3 本機語音實測
+
+RTX 4080 Laptop 12 GB、系統 RAM 32 GB、W4A8 主模型、experts in RAM、2 GiB GPU expert 快取、pinned memory 關閉。以下是後端日誌記錄的執行耗時，包含載入／預處理與推論，不代表各階段已分別量測：
+
+| 台詞 | 成品長度 | 後端耗時 |
+|---|---:|---:|
+| 6 段雙人對話（自動分 3 塊） | 約 26.05 秒 | 約 648 秒 |
+| 單句「先去問能不能留到月底……」 | 約 4.78 秒 | 約 162 秒 |
+
+單句同步監控記錄中，從後端工作開始到第一個音訊 frame 約 74 秒；生成時可用 RAM 曾降至約 200 MB，並持續讀入磁碟頁面。任務結束並釋放模型後，可用 RAM 回升到約 17.5 GB。這證明生成期間有記憶體壓力，但尚未透過對照測試拆出換頁、CPU 發送 kernel、量化運算與傳輸各自的耗時比例，不能把全部延遲歸因於單一因素。
+
+自動關閉服務的修改已通過 20 項後端測試與兩次真實聲線試聽的「自動啟動 → 保存結果 → 程序退出」驗證；這不是完整文字生成的效能修復，也未重跑以上生成作速度對照。
+
+---
+
 # 疑難排解
 
 **作品列表空白、優化按鈕失敗、生成找不到節點**
@@ -778,6 +1079,18 @@ junction 沒建好。回到步驟 6，並確認 ComfyUI 主控台有 `ComfyUI-H3
 
 **生成極慢，GPU 使用率卻很低**
 記憶體不足導致權重被換出到硬碟。關掉瀏覽器分頁與其他吃記憶體的程式，重啟 ComfyUI 釋放快取模型。若專案放在外接硬碟，搬到內接 NVMe。
+
+**Drama3 顯示待命，但 8190 無法連線**
+這是完成後退出服務的正常狀態。請看主 H3 的 `/h3-studio/drama3/status`，應為 `ready: true`、`standby: true`；下一筆工作會自動啟動。若顯示未安裝，檢查步驟 12 的獨立 venv／ComfyUI 路徑；模型缺檔則依步驟 7 補齊。
+
+**Drama3 試聽很快，生成一句話卻需要數分鐘**
+試聽只解碼已保存的參考音訊；生成會準備約 24.6 GB 主模型並逐幀推論。請在生成當下看系統可用 RAM、磁碟讀取與進度，不要用工作結束後的記憶體百分比判斷。32 GB 開發機已觀察到大量換頁，目前速度問題仍存在；完成後關閉程序只釋放閒置記憶體。
+
+**Drama3 工作完成後 Python 還常駐，或下一筆不會自動啟動**
+確認已更新程式並重啟主 H3 ComfyUI，以載入新生命周期邏輯；確認該 PID 的命令列是本專案的 `--port 8190`，不要關閉其他 Python。查 `services/Drama3/run/server-8190.stderr.log` 及工作錯誤；閒置時可使用 `stop_drama3.bat`，工作中先按介面的停止。
+
+**RTX 提升回報缺少 NVIDIA 套件／節點**
+套件必須裝在主 H3 `.venv`，不是 Drama3 `.venv`。依步驟 13 確認 `import nvvfx` 與兩個 effect 類別可用，再重啟主 ComfyUI；補幀另外需要 RTX 40 系列或更新，不能只憑超解析可用就判定補幀支援。
 
 **同一個 session 內切換 Turbo（4步／6步／8步）與 QUALITY 後變慢**
 ComfyUI 會把載入過的模型留在記憶體，兩種 VAE 與有無 LoRA 的模型副本會同時堆著。重啟 ComfyUI 即可。
@@ -809,6 +1122,10 @@ Gemini API 回 HTTP 429。等一段時間再試，或到 Google AI Studio 檢查
 | Python | 3.11.15 |
 | PyTorch | 2.10.0+cu130（CUDA 13.0） |
 | ComfyUI | v0.37.0 |
+| Drama3 獨立 ComfyUI | v0.40.0／`3541246a` |
+| ComfyUI-Drama3 節點 | `66c4fb9c` |
+| Drama3 獨立 comfy-kitchen／comfy-aimdo | 0.2.37／0.5.6 |
+| nvidia-vfx（RTX 提升） | 0.2.0.0／VFX SDK 1.3.0.0 |
 | triton-windows | 3.6.0.post26 |
 | SageAttention | 2.2.0+cu130torch2.10.0andhigher.post6 |
 | Pillow | 12.2.0 |
@@ -822,6 +1139,22 @@ Gemini API 回 HTTP 429。等一段時間再試，或到 Google AI Studio 檢查
 ```powershell
 cd h3-local-studio; npm test
 ```
+
+Drama3 後端測試（在專案根目錄，用主專案 venv；模擬服務，不執行大模型）：
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s integrations/ComfyUI-H3-Studio -p test_h3_studio_drama3.py
+```
+
+涵蓋角色綁定、參考聲線試聽、下載／metadata、取消、工作完成後關閉、待命清單、下一筆重新啟動與失敗清理。`tools/test_h3_drama3.mjs` 會操作實際服務並建立測試聲線／配音，與不送 GPU 工作的 `tools/test_h3_queue_layout.mjs` 不同，不要當作純介面測試隨意執行。瀏覽器驗收只使用 Playwright 專用 headless Chromium，禁止啟動或控制本機 Microsoft Edge。
+
+人臉精修後端測試（在專案根目錄，使用 mock 與 FFmpeg，不執行 H3 生成）：
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s integrations/ComfyUI-H3-Studio -p test_h3_studio_face.py
+```
+
+前端測試包含 `h3-local-studio/tests/face-refine.test.mjs`，檢查原生／快速精修接線、多人串接、取消與自動生成後接續精修等行為；`tools/test_h3_face_ui.mjs` 是攔截 ComfyUI API 的 Chromium 介面測試。`tools/test_h3_face.mjs` 預設會偵測真實來源並建立快取，加上 `--run` 才提交精修 GPU 工作，`--turbo`／`--multi` 分別切換快速／多人模式；請使用明確指定的短片，勿把它當作純 mock 測試。
 
 ---
 

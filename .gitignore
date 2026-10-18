@@ -8,6 +8,7 @@ __pycache__/
 # ComfyUI runtime. The Studio nodes live in integrations/ and are loaded from
 # there through a directory junction, so nothing under ComfyUI/ is tracked.
 /ComfyUI/
+/services/Drama3/
 
 # Superseded publish copy, replaced by this repository
 /LocalStudio-publish/

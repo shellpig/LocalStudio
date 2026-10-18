@@ -2,6 +2,15 @@
 setlocal
 cd /d "%~dp0"
 
+if exist "%~dp0services\Drama3\ComfyUI\main.py" (
+  call "%~dp0stop_drama3.bat" --no-pause
+  if errorlevel 1 (
+    echo Drama3 still has work. Finish or stop it in Studio, then retry.
+    if /i not "%~1"=="--from-start" pause
+    exit /b 1
+  )
+)
+
 echo [H3 Local Studio] Stopping queued and active work...
 powershell -NoProfile -Command "$ProgressPreference='SilentlyContinue'; try { Invoke-WebRequest -UseBasicParsing -Method Post -Uri 'http://127.0.0.1:8188/interrupt' -TimeoutSec 2 | Out-Null } catch {}; try { Invoke-WebRequest -UseBasicParsing -Method Post -ContentType 'application/json' -Body (@{clear=$true} | ConvertTo-Json) -Uri 'http://127.0.0.1:8188/queue' -TimeoutSec 2 | Out-Null } catch {}"
 

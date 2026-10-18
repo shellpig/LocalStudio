@@ -10,7 +10,7 @@ export type GenerationJob = {
 export function createGenerationQueue(onChange: (jobs: GenerationJob[]) => void) {
   let nextId = 1;
   let running = false;
-  const entries: { job: GenerationJob; run: (onStatus: (message: string) => void) => Promise<void> }[] = [];
+  const entries: { job: GenerationJob; run: (onStatus: (message: string) => void) => Promise<void>; onDiscard?: () => void }[] = [];
   const publish = () => onChange(entries.map(({ job }) => ({ ...job })));
 
   async function drain() {
@@ -42,9 +42,9 @@ export function createGenerationQueue(onChange: (jobs: GenerationJob[]) => void)
   }
 
   return {
-    add(label: string, run: (onStatus: (message: string) => void) => Promise<void>) {
+    add(label: string, run: (onStatus: (message: string) => void) => Promise<void>, onDiscard?: () => void) {
       const id = nextId++;
-      entries.push({ job: { id, label, status: "waiting", message: "等待前一筆任務完成" }, run });
+      entries.push({ job: { id, label, status: "waiting", message: "等待前一筆任務完成" }, run, onDiscard });
       publish();
       void drain();
       return id;
@@ -52,6 +52,7 @@ export function createGenerationQueue(onChange: (jobs: GenerationJob[]) => void)
     remove(id: number) {
       const index = entries.findIndex(({ job }) => job.id === id && job.status !== "running");
       if (index === -1) return;
+      if (entries[index].job.status === "waiting") entries[index].onDiscard?.();
       entries.splice(index, 1);
       publish();
     },

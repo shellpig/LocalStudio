@@ -84,11 +84,13 @@ def resolve_output_video(filename, subfolder="", allow_images=False, allow_audio
     if allow_images:
         allowed = allowed | {".png", ".jpg", ".jpeg", ".webp"}
     if allow_audio:
-        allowed = allowed | {".wav"}
+        allowed = allowed | {".wav", ".flac"}
     if os.path.basename(filename) != filename or Path(filename).suffix.lower() not in allowed:
         raise ValueError("Unsupported output file")
     if Path(filename).suffix.lower() == ".wav" and (subfolder != GEMINI_TTS_OUTPUT_SUBFOLDER or not is_gemini_tts_filename(filename)):
         raise ValueError("Invalid audio output path")
+    if Path(filename).suffix.lower() == ".flac" and (subfolder != "H3_Drama3" or not re.fullmatch(r"H3_Drama3_[0-9a-f]{32}\.flac", filename)):
+        raise ValueError("Invalid Drama3 output path")
     output_root = Path(folder_paths.get_output_directory()).resolve()
     target = (output_root / subfolder / filename).resolve()
     if os.path.commonpath((os.path.normcase(target), os.path.normcase(output_root))) != os.path.normcase(output_root):
@@ -129,6 +131,9 @@ def resolve_input_image(filename):
 
 def validated_metadata(data):
     metadata = {}
+    if data.get("faceRefine") is not None:
+        from .h3_studio_face import validate_settings
+        metadata["faceRefine"] = validate_settings(data["faceRefine"])
     generation_seconds = data.get("generationSeconds")
     if isinstance(generation_seconds, int) and generation_seconds >= 1:
         metadata["generationSeconds"] = generation_seconds
@@ -294,6 +299,8 @@ def reference_inputs_exist(metadata):
 
 
 def output_is_extendable(metadata):
+    if metadata.get("faceRefined"):
+        return False
     if metadata.get("inputMode") == "reference":
         return reference_inputs_exist(metadata)
     return latent_exists(metadata)
@@ -1030,6 +1037,8 @@ async def list_h3_outputs(_request):
             item["extendable"] = False
             outputs.append(item)
     outputs.extend(list_gemini_tts_audio(output_root))
+    from .h3_studio_drama3 import list_audio
+    outputs.extend(list_audio(output_root))
     outputs.sort(key=lambda item: item["modifiedAt"], reverse=True)
     return web.json_response({"outputs": outputs})
 

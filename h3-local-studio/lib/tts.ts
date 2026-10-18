@@ -20,9 +20,11 @@ export type GeneratedAudio = {
   subfolder: string;
   type: string;
   kind: "audio";
-  model: GeminiTtsModel;
+  model: GeminiTtsModel | "drama3";
   voice: string;
   modifiedAt: number;
+  seed?: number;
+  drama3?: import("./drama3").Drama3Settings;
 };
 
 export function audioDownloadUrl(filename: string) {

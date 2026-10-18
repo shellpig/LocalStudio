@@ -6,7 +6,6 @@ import {
   checkConnection,
   createImage,
   createQwenImage,
-  createVideo,
   deleteVideo,
   GeneratedVideo,
   GenerationOptions,
@@ -43,11 +42,15 @@ import {
 import { CropRect, cropImageFile, ImageCropper, readImageDimensions } from "./image-cropper";
 import { ImageMarker } from "./image-marker";
 import { audioDownloadUrl } from "@/lib/tts";
-import TtsStudio from "./tts-studio";
+import SpeechStudio from "./speech-studio";
+import { drama3DownloadUrl } from "@/lib/drama3";
 import EnhanceStudio from "./enhance-studio";
 import SwapStudio from "./swap-studio";
 import { SWAP_LABELS } from "@/lib/swap";
 import RTXStudio from "./rtx-studio";
+import FaceRefineStudio from "./face-refine-studio";
+import FaceSettings from "./face-settings";
+import { cancelFace, createVideoWithFace, DEFAULT_FACE_REFINE, FaceControl, FaceRefineOptions } from "@/lib/face-refine";
 import GenerationQueuePanel from "./generation-queue-panel";
 import LoraPicker from "./lora-picker";
 import { createGenerationQueue, GenerationJob } from "@/lib/generation-queue";
@@ -117,6 +120,10 @@ export default function Home() {
   const [swapMode, setSwapMode] = useState(false);
   const [rtxMode, setRTXMode] = useState(false);
   const [swapWork, setSwapWork] = useState<GeneratedVideo | null>(null);
+  const [faceWork, setFaceWork] = useState<GeneratedVideo | null>(null);
+  const [faceEnabled, setFaceEnabled] = useState(false);
+  const [faceSettings, setFaceSettings] = useState<FaceRefineOptions>(DEFAULT_FACE_REFINE);
+  const [activeFaceControl, setActiveFaceControl] = useState<FaceControl | null>(null);
   const [enhancementBusy, setEnhancementBusy] = useState(false);
   const [connected, setConnected] = useState(false);
   const [prompt, setPrompt] = useState("");
@@ -166,6 +173,7 @@ export default function Home() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [videos, setVideos] = useState<GeneratedVideo[]>([]);
+  const [dramaWork, setDramaWork] = useState<GeneratedVideo | null>(null);
   const [continuationSource, setContinuationSource] = useState<GeneratedVideo | null>(null);
   const promptHighlightRef = useRef<HTMLDivElement>(null);
   // 圖像編輯 (Qwen-Image 2.1) keeps its own settings; nothing here touches the H3 pipeline.
@@ -520,6 +528,7 @@ export default function Home() {
       return;
     }
     const options: GenerationOptions = {
+      faceRefine: faceEnabled && sourceMode !== "text" && !continuationSource ? { ...faceSettings } : undefined,
       prompt: sourceMode === "reference" && optimizedPromptMode !== "Ref2VA"
         ? buildReferencePrompt(
             continuationSource ? `Continue seamlessly from the supplied first-frame anchor. ${prompt.trim()}` : prompt,
@@ -539,15 +548,24 @@ export default function Home() {
     };
     const firstImage = !continuationSource && sourceMode !== "text" ? firstImageFile : null;
     const lastImage = !continuationSource && sourceMode !== "text" ? lastImageFile : null;
+    if (options.faceRefine && options.faceRefine.select !== "all_faces" && options.faceRefine.referenceIndex >= (references.length + Number(Boolean(firstImage)) + Number(Boolean(lastImage)))) {
+      setError("請選擇有效的人臉身份參考圖。");
+      return;
+    }
     setError("");
     setNotice("已加入生成佇列。");
     setContinuationSource(null);
     generationQueue.add(label, async (onStatus) => {
+      const control: FaceControl = { stop: false };
       try {
-        const result = await createVideo(options, firstImage, lastImage, onStatus, references);
+        const result = await createVideoWithFace(options, firstImage, lastImage, references, options.faceRefine, control, (message) => {
+          onStatus(message);
+          if (message.startsWith("人臉精修")) setActiveFaceControl(control);
+        }, (original) => setVideos((current) => [original, ...current.filter((item) => item.filename !== original.filename)]));
         setVideos((current) => [result, ...current.filter((item) => item.filename !== result.filename)]);
-        setNotice("H3 影片已完成。");
+        setNotice(options.faceRefine ? "H3 影片與人臉精修已完成，原片已保留。" : "H3 影片已完成。");
       } finally {
+        setActiveFaceControl(null);
         void refreshHistory();
       }
     });
@@ -805,6 +823,9 @@ export default function Home() {
   }
 
   async function redoVideo(video: GeneratedVideo) {
+    if (video.faceRefined) { setFaceWork(video); return; }
+    setFaceEnabled(Boolean(video.faceRefine));
+    setFaceSettings(video.faceRefine ?? DEFAULT_FACE_REFINE);
     if (video.swapMode) {
       setRTXMode(false); setEnhancementMode(false); setSwapMode(true); setSwapWork({ ...video }); setView("create");
       return;
@@ -1037,7 +1058,7 @@ export default function Home() {
         <div className="local-label"><span className="status-dot" />LOCAL</div>
       </aside>
 
-      <section className={`content${generationJobs.length ? " has-generation-queue" : ""}`}>
+      <section className="content">
         {view === "create" ? <>
           <div className="hero">
               <p className="eyebrow">MINIMAX H3 · LOCAL</p>
@@ -1058,7 +1079,7 @@ export default function Home() {
               <h1>圖像編輯</h1>
               <p>用文字生成圖像，或上傳圖片後用一句指令編輯；擅長文字排版與多圖參考。</p>
             </div> : null}
-        <div className={`studio-workspace${generationJobs.length ? " with-queue" : ""}`}>
+        <div className="studio-workspace">
           <div className="studio-editor">
         <div hidden={view !== "create" || !swapMode}>
           <SwapStudio connected={connected} disabled={enhancementBusy || isGeneratingH3Image} enqueue={generationQueue.add} onComplete={() => void refreshHistory()} initialWork={swapWork} />
@@ -1304,7 +1325,7 @@ export default function Home() {
                 </div>
               )}
 
-              <div className="composer-footer">
+              <div className={`composer-footer${sourceMode !== "text" && !continuationSource ? " video-face-footer" : ""}`}>
                 <div className="controls">
                   <label>
                     <span>模式</span>
@@ -1321,7 +1342,7 @@ export default function Home() {
                           <option value="cooled-turbo-4">4步</option>
                           <option value="fast">6步</option>
                           <option value="cooled-turbo-8">8步</option>
-                          <option value="quality">QUALITY · 原生 20 步／每步降溫</option>
+                          <option value="quality">QUALITY · 原生 20 步</option>
                           <option value="safe-long">安全長片 · 低解析生成／480P 輸出</option>
                         </>
                       )}
@@ -1415,6 +1436,17 @@ export default function Home() {
                   </label>
                 </div>
 
+                {sourceMode !== "text" && !continuationSource && <div className="face-generation">
+                  <label className="face-toggle"><input type="checkbox" checked={faceEnabled} onChange={(event) => setFaceEnabled(event.target.checked)} />生成後自動人臉精修</label>
+                  {faceEnabled && <>
+                    <FaceSettings value={faceSettings} onChange={setFaceSettings} references={[
+                      ...(sourceMode === "reference" ? referenceImages.filter((reference) => reference.file).map((reference) => `@${reference.label || "參考圖"}`) : []),
+                      ...(firstImageFile ? ["首幀圖片"] : []), ...(lastImageFile ? ["尾幀圖片"] : []),
+                    ]} />
+                    <p className="face-help">生成完成後另跑精修，保留原片並另存成品；沿用每步降溫設定。單人模式依每個鏡頭首次出現時的位置選人，多人模式會自動逐組處理。</p>
+                    <p className="face-help">多人交錯仍可能追錯；需要逐鏡頭確認時，可從作品列表預覽選臉。</p>
+                  </>}
+                </div>}
                 <div className="generate-actions">
                   {sourceMode !== "image" && (
                     <button className="generate-button image" onClick={generateImage} disabled={!connected || isGenerating || isOptimizing || enhancementBusy}>
@@ -1457,7 +1489,7 @@ export default function Home() {
             )}
 
             </>}
-            {!enhancementBusy && <RecentSection videos={videoWorks.slice(0, 3)} onViewAll={() => setView("works")} onDelete={removeVideo} onExtend={extendVideo} onRedo={redoVideo} onReuseSeed={reuseSeed} emptyText="第一支影片，從一句話開始" />}
+            {!enhancementBusy && <RecentSection videos={videoWorks.slice(0, 3)} onViewAll={() => setView("works")} onDelete={removeVideo} onExtend={extendVideo} onRedo={redoVideo} onRefine={setFaceWork} onReuseSeed={reuseSeed} emptyText="第一支影片，從一句話開始" />}
           </>
         ) : view === "edit" ? (
           <>
@@ -1737,18 +1769,20 @@ export default function Home() {
             {worksTab === "image"
               ? <ImageGrid videos={imageWorks} onDelete={removeVideo} onRedo={redoImage} onReuseSeed={reuseSeed} emptyText="目前還沒有本次工作階段的圖片" />
               : worksTab === "audio"
-                ? <AudioGrid audios={audioWorks} onDelete={removeVideo} />
-              : <VideoGrid videos={videoWorks} onDelete={removeVideo} onExtend={extendVideo} onRedo={redoVideo} onReuseSeed={reuseSeed} emptyText="目前還沒有本次工作階段的作品" />}
+                ? <AudioGrid audios={audioWorks} onDelete={removeVideo} onRedo={(audio) => { setDramaWork(audio); setView("tts"); }} />
+              : <VideoGrid videos={videoWorks} onDelete={removeVideo} onExtend={extendVideo} onRedo={redoVideo} onRefine={setFaceWork} onReuseSeed={reuseSeed} emptyText="目前還沒有本次工作階段的作品" />}
           </section>
-        ) : <TtsStudio onGenerated={(audio) => {
+        ) : <SpeechStudio key={dramaWork?.filename ?? "speech"} enqueue={generationQueue.add} disabled={enhancementBusy || isGeneratingH3Image} initialSettings={dramaWork?.drama3} onGenerated={(audio) => {
           setVideos((current) => [audio, ...current.filter((item) => item.filename !== audio.filename || item.subfolder !== audio.subfolder)]);
           setWorksTab("audio");
         }} />}
           </div>
           {generationJobs.length > 0 && <GenerationQueuePanel jobs={generationJobs} elapsed={elapsed} onRemove={generationQueue.remove} />}
+          {activeFaceControl && <button type="button" className="face-stop" onClick={() => void cancelFace(activeFaceControl).catch((caught) => setError(String(caught)))}>停止人臉精修（保留原片）</button>}
         </div>
       </section>
 
+      {faceWork && <FaceRefineStudio key={`${faceWork.subfolder}/${faceWork.filename}`} source={faceWork} queueBusy={queueBusy} disabled={!connected || enhancementBusy || isGeneratingH3Image} enqueue={generationQueue.add} removeJob={generationQueue.remove} onBusyChange={setEnhancementBusy} onClose={() => setFaceWork(null)} onComplete={(video) => { setVideos((current) => [video, ...current.filter((item) => item.filename !== video.filename)]); void refreshHistory(); }} />}
       {markerImage && (
         <ImageMarker
           key={markerImage.id}
@@ -1884,19 +1918,20 @@ type VideoGridActions = {
   onReuseSeed: (seed: number) => void;
   onExtend: (video: GeneratedVideo) => void;
   onRedo: (video: GeneratedVideo) => Promise<void>;
+  onRefine: (video: GeneratedVideo) => void;
   emptyText: string;
 };
 
-function RecentSection({ videos, onViewAll, onDelete, onExtend, onRedo, onReuseSeed, emptyText }: VideoGridActions & { onViewAll: () => void }) {
+function RecentSection({ videos, onViewAll, onDelete, onExtend, onRedo, onRefine, onReuseSeed, emptyText }: VideoGridActions & { onViewAll: () => void }) {
   return (
     <section className="recent-section">
       <div className="section-heading"><div><p className="eyebrow">LOCAL CREATIONS</p><h2>最近作品</h2></div><button onClick={onViewAll}>查看全部 →</button></div>
-      <VideoGrid videos={videos} onDelete={onDelete} onExtend={onExtend} onRedo={onRedo} onReuseSeed={onReuseSeed} emptyText={emptyText} />
+      <VideoGrid videos={videos} onDelete={onDelete} onExtend={onExtend} onRedo={onRedo} onRefine={onRefine} onReuseSeed={onReuseSeed} emptyText={emptyText} />
     </section>
   );
 }
 
-function VideoGrid({ videos, onDelete, onExtend, onRedo, onReuseSeed, emptyText }: VideoGridActions) {
+function VideoGrid({ videos, onDelete, onExtend, onRedo, onRefine, onReuseSeed, emptyText }: VideoGridActions) {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [loadingRedo, setLoadingRedo] = useState<string | null>(null);
@@ -1944,6 +1979,7 @@ function VideoGrid({ videos, onDelete, onExtend, onRedo, onReuseSeed, emptyText 
             <div>
               <div className="video-meta">
                 <span title={video.filename}>{video.filename}</span>
+                {video.faceRefined && <small title={`來源：${video.faceRefineSource?.filename}`}>人臉精修{video.faceRefinePeopleTotal ? ` · 逐人修復 ${video.faceRefinePeopleCompleted}/${video.faceRefinePeopleTotal} 組` : ""} · {video.faceRefineSteps ?? 20} 步{video.faceRefine?.mode === "turbo-8" ? " · 無音訊約束" : ""} · 強度 {video.faceRefine?.strength}</small>}
                 {video.enhanced && <small title={`來源：${video.enhancementSource}`}>畫質提升 · 720p · {video.enhancementStrength}%</small>}
                 {video.rtxOperation && <small title={`來源：${video.rtxSource}`}>RTX {video.rtxOperation === "fps" ? "補幀" : "超解析"} · {video.rtxMultiplier} 倍 · {video.width} × {video.height} · {video.fps} fps</small>}
                 {video.swapMode && <small title={`來源：${video.swapSource}`}>{SWAP_LABELS[video.swapMode]} · {video.steps} 步 · {video.swapCompletedSegments}／{video.swapTotalSegments} 段</small>}
@@ -1968,6 +2004,7 @@ function VideoGrid({ videos, onDelete, onExtend, onRedo, onReuseSeed, emptyText 
                   {openMenu === key && (
                     <div className="menu-popover" role="menu">
                       <a className="download-action" href={src} download={video.filename} role="menuitem" onClick={() => setOpenMenu(null)}>下載影片</a>
+                      <button role="menuitem" onClick={() => { setOpenMenu(null); onRefine(video); }}>人臉精修</button>
                       <button className="extend-action" role="menuitem" onClick={() => { setOpenMenu(null); onExtend(video); }} disabled={!video.extendable}>
                         {video.extendable ? "延伸影片" : video.inputMode === "reference" && (video.referenceFiles?.length ?? 0) > 8 ? "延伸影片（最多沿用 8 張參考圖）" : "延伸影片（作品無延伸資料）"}
                       </button>
@@ -2070,7 +2107,7 @@ function ImageGrid({ videos, onDelete, onRedo, onReuseSeed, emptyText }: ImageGr
   );
 }
 
-function AudioGrid({ audios, onDelete }: { audios: GeneratedVideo[]; onDelete: (audio: GeneratedVideo) => Promise<void> }) {
+function AudioGrid({ audios, onDelete, onRedo }: { audios: GeneratedVideo[]; onDelete: (audio: GeneratedVideo) => Promise<void>; onRedo: (audio: GeneratedVideo) => void }) {
   const [deleting, setDeleting] = useState<string | null>(null);
 
   async function confirmDelete(audio: GeneratedVideo) {
@@ -2101,9 +2138,11 @@ function AudioGrid({ audios, onDelete }: { audios: GeneratedVideo[]; onDelete: (
               {audio.voice && <small>聲線 {audio.voice}</small>}
               {audio.model === "gemini-3.8-flash-tts" && <small>Gemini 3.8 Flash TTS</small>}
               {audio.model === "gemini-3.8-flash-lite-tts" && <small>Gemini 3.8 Flash-Lite TTS</small>}
+              {audio.model === "drama3" && <small>Drama3 多人配音 · 種子 {audio.seed}</small>}
             </div>
             <div className="card-actions">
-              <a className="img-action" href={audioDownloadUrl(audio.filename)}>下載 WAV</a>
+              <a className="img-action" href={audio.model === "drama3" ? drama3DownloadUrl(audio.filename) : audioDownloadUrl(audio.filename)}>下載 {audio.model === "drama3" ? "FLAC" : "WAV"}</a>
+              {audio.model === "drama3" && audio.drama3 && <button className="img-action" onClick={() => onRedo(audio)}>再做一次</button>}
               <button className="img-action delete" onClick={() => void confirmDelete(audio)} disabled={deleting === `${audio.subfolder}/${audio.filename}`}>刪除</button>
             </div>
           </div>

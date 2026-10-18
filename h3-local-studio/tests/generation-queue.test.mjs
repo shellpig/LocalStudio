@@ -10,6 +10,20 @@ const deferred = () => {
 };
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
+test("discarding a waiting refinement releases its controls without executing GPU work", async () => {
+  const gate = deferred();
+  const queue = createGenerationQueue(() => {});
+  let discarded = false, executed = false;
+  const running = queue.add("active", async () => gate.promise);
+  const pending = queue.add("refine", async () => { executed = true; }, () => { discarded = true; });
+  queue.remove(running);
+  assert.equal(discarded, false);
+  queue.remove(pending);
+  assert.equal(discarded, true);
+  gate.resolve(); await flush();
+  assert.equal(executed, false);
+});
+
 test("video postprocessing and all Qwen batch images finish before the next job starts", async () => {
   let jobs;
   const queue = createGenerationQueue((value) => { jobs = value; });

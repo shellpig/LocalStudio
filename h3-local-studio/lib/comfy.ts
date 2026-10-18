@@ -4,6 +4,7 @@ type GraphNode = { class_type: string; inputs: Record<string, unknown>; _meta?: 
 type PromptGraph = Record<string, GraphNode>;
 
 export type GenerationOptions = {
+  faceRefine?: import("./face-refine").FaceRefineOptions;
   prompt: string;
   profile: "fast" | "cooled-fast" | "cooled-turbo-4" | "cooled-turbo-8" | "quality" | "safe-long" | "low-vram";
   resolution: "safe" | "clear" | "p480" | "p540" | "native";
@@ -31,6 +32,15 @@ export type GenerationOptions = {
 };
 
 export type GeneratedVideo = {
+  faceRefine?: import("./face-refine").FaceRefineOptions;
+  faceRefined?: boolean;
+  faceRefineSource?: Pick<GeneratedVideo, "filename" | "subfolder" | "type">;
+  faceRefineReference?: string;
+  faceRefinePicks?: number[];
+  faceRefineSteps?: number;
+  faceRefineReferences?: string[];
+  faceRefinePeopleTotal?: number;
+  faceRefinePeopleCompleted?: number;
   rtxOperation?: "fps" | "upscale";
   rtxMultiplier?: number;
   rtxSource?: string;
@@ -52,7 +62,8 @@ export type GeneratedVideo = {
   type: string;
   /** Output category; absent means video for older works. */
   kind?: "video" | "image" | "audio";
-  model?: "qwen-image-2.1" | "gemini-3.8-flash-tts" | "gemini-3.8-flash-lite-tts";
+  model?: "qwen-image-2.1" | "gemini-3.8-flash-tts" | "gemini-3.8-flash-lite-tts" | "drama3";
+  drama3?: import("./drama3").Drama3Settings;
   voice?: string;
   steps?: number;
   qwenAspect?: QwenAspect;
@@ -615,7 +626,7 @@ export async function checkConnection() {
   }
 }
 
-async function uploadImage(file: File) {
+export async function uploadImage(file: File) {
   const data = new FormData();
   // The name is built from scratch rather than prefixed onto file.name. A file
   // restored from a previous upload already carries that upload's prefix, so
@@ -822,9 +833,10 @@ export async function getRecentVideos() {
   return files.outputs.map((file) => ({ ...file, ...historyByPath.get(`${file.subfolder}/${file.filename}`) }));
 }
 
-export async function waitForResult(promptId: string, onStatus: (status: string) => void, kind: "video" | "image" = "video") {
+export async function waitForResult(promptId: string, onStatus: (status: string) => void, kind: "video" | "image" = "video", stopped?: () => boolean) {
   let lastStatus = "";
   for (;;) {
+    if (stopped?.()) throw new Error("工作已停止。");
     const response = await request(`/history/${encodeURIComponent(promptId)}`);
     const history = (await response.json()) as Record<string, unknown>;
     const entry = history[promptId] as { status?: { status_str?: string; completed?: boolean; messages?: unknown[] } } | undefined;
@@ -929,6 +941,7 @@ export async function createVideo(
   }
   const metadata = {
     seed: runOptions.seed,
+    faceRefine: runOptions.faceRefine,
     extraLoras: runOptions.extraLoras,
     cooldownSeconds: Math.max(MIN_COOLDOWN_SECONDS, runOptions.cooldownSeconds ?? DEFAULT_COOLDOWN_SECONDS),
     generationSeconds: segment.generationSeconds ?? Math.max(1, Math.round((Date.now() - startedAt) / 1000)),

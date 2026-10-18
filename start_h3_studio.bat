@@ -8,6 +8,11 @@ if not errorlevel 1 (
   choice /C YN /N /M "Stop them and start fresh? [Y/N]: "
   if errorlevel 2 goto ensure_services
   call "%~dp0stop_h3_studio.bat" --from-start
+  if errorlevel 1 (
+    echo Existing work could not be stopped safely. Startup cancelled.
+    pause
+    exit /b 1
+  )
 )
 
 :ensure_services
