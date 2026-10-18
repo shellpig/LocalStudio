@@ -63,6 +63,30 @@ class SwapTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.swap.source_folder(source_id)
 
+    def test_akatz_settings_and_metadata_survive_prepare_and_finish(self):
+        settings = {**self.settings, "mode": "akatz-v1.5", "steps": 20, "prompt": "Replace the person in <Video 1> with <Picture 1>."}
+        self.assertEqual(self.swap.validate_settings(settings), {**settings, "target": ""})
+        for steps in (4, 6, 8):
+            with self.assertRaisesRegex(ValueError, "20"):
+                self.swap.validate_settings({**settings, "steps": steps})
+        folder = self.swap.source_folder("b" * 32)
+        folder.mkdir(parents=True)
+        source = folder / "video.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=128x128:rate=24",
+                        "-t", "1", "-c:v", "libx264", str(source)], check=True)
+        reference = folder / "reference.png"
+        from PIL import Image
+        Image.new("RGB", (128, 128)).save(reference)
+        self.swap.prepare_segments(folder, source, reference, settings, "akatz_source.mp4")
+        raw = self.root / "output/h3_swap_cache" / f"{'b' * 32}_seg0_00001_.mp4"
+        raw.parent.mkdir(parents=True)
+        shutil.copyfile(folder / "guide_0.mp4", raw)
+        result = self.swap.finish_segments("b" * 32, [{"filename": raw.name, "subfolder": "h3_swap_cache"}], 12)
+        metadata = json.loads((self.root / "output/video" / result["filename"]).with_suffix(".mp4.h3.json").read_text(encoding="utf-8"))
+        for key, value in {"swapMode": "akatz-v1.5", "steps": 20, "profile": "quality", "swapStrength": 1, "prompt": settings["prompt"], "sound": False}.items():
+            self.assertEqual(metadata[key], value)
+        self.assertEqual(metadata["swapReferenceFile"], f"h3_swap/{'b' * 32}/reference.png")
+
     def test_segments_partial_output_audio_and_exact_display_aspect(self):
         folder = self.swap.source_folder("a" * 32)
         folder.mkdir(parents=True)

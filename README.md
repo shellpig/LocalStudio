@@ -12,7 +12,7 @@ Windows 本機版 MiniMax H3 影片製作介面。影片、Qwen 圖像與 SeedVR
 - 圖像編輯（Qwen-Image 2.1）：原版、Noct Q V4、REDQW21 UNLOCKED V2 三種主模型可切換；文字生圖或上傳最多 4 張圖編輯，支援 7 種比例與 2K。編輯預設依第一張圖比例，指定比例時先裁切第一張圖
 - 語音生成（Gemini 3.8 TTS，雲端，可選）：文字轉 WAV，30 個預設聲線加上可搜尋、試聽的 Google 聲線庫
 - 攝影機視角：Qwen 圖像搭配 Multiple-Angles LoRA v2，支援方位、角度、景別與強度
-- 影片換角：BFS 換頭（臉部＋髮型）或整個角色替換，支援 4／6／8／20 步、480P／540P／原生 H3，沿用來源影片比例並合回原音軌
+- 影片換角：BFS 換頭（臉部＋髮型）或整個角色替換（4／6／8／20 步），另可選 Akatz V1.5 整個角色替換（20 步）；支援 480P／540P／原生 H3，沿用來源影片比例並合回原音軌
 - 影片畫質提升：SeedVR2 3B INT8，另存 720p 作品，保留原比例、幀率與聲音
 - H3 影片與 Qwen 圖片共用生成佇列，按下生成時保存設定與圖片，依序執行
 - 作品列表、刪除、下載，並保存生成設定 metadata
@@ -50,7 +50,7 @@ Windows 本機版 MiniMax H3 影片製作介面。影片、Qwen 圖像與 SeedVR
 | H3 文字／首尾圖影片（4步／6步／8步） | H3 共用三項、首尾圖模型、Turbo LoRA | 步驟 5 的 H3 節點 |
 | H3 QUALITY、一般影片動態延伸 | 上述模型，另加 FP16 影片 VAE | Motion Context 節點 |
 | H3 參考生影片（4步／6步／8步） | H3 共用三項、Ref2VA W4A8 模型、Turbo LoRA | LongMedia 節點；最多 9 張參考圖 |
-| 影片換角（BFS 換頭／整個角色替換） | H3 共用三項、Ref2VA W4A8 模型、對應 BFS LoRA；4／6／8 步另需 Turbo LoRA | H3 原生 Add Guide、既有 H3／KJNodes 節點與 FFmpeg |
+| 影片換角（BFS／Akatz V1.5） | H3 共用三項、Ref2VA W4A8 模型、所選換角 LoRA；BFS 4／6／8 步另需 Turbo LoRA，Akatz V1.5 使用 20 步 | 既有 H3／KJNodes 節點與 FFmpeg；BFS 另使用 H3 原生 Add Guide |
 | Qwen 文字生圖／圖像編輯 | Qwen 三項 | 使用 ComfyUI v0.37.0 |
 | Qwen 攝影機視角 | Qwen 三項、攝影機 LoRA | 只上傳一張原圖 |
 | 影片畫質提升（AI 強度大於 0%） | SeedVR2 兩項 | ComfyUI v0.37.0 的內建 SeedVR2 節點、FFmpeg |
@@ -267,14 +267,15 @@ New-Item -ItemType Directory -Force -Path .\ComfyUI\models\loras | Out-Null
 curl.exe -L --fail --retry 3 -C - "https://huggingface.co/akhaliq/Qwen-Image-2.1-Multiple-Angles-LoRA/resolve/0d91c4dfa22b3f5aa89c020eadc30d8f42cb51c0/checkpoints_v2/angles_v2_full_qwen21_multiple_angles_v2_qwen21_multiple_angles_v2_000001500.safetensors" -o ".\ComfyUI\models\loras\qwen_image_2.1_multiple_angles_v2_step1500.safetensors"
 ```
 
-### BFS 影片換角（可選）
+### 影片換角：BFS／Akatz V1.5（可選）
 
-沿用 H3 的共用文字編碼器、INT8 影片 VAE、聲音 VAE 與 Ref2VA W4A8 主模型；不需另下載一套 H3。以下兩個 LoRA 依替換範圍選擇，放入 `ComfyUI/models/loras/`，保留表中的檔名。兩個都安裝約增加 **0.87 GiB**，未計入前面的基本模型總量。
+沿用 H3 的共用文字編碼器、INT8 影片 VAE、聲音 VAE 與 Ref2VA W4A8 主模型；不需另下載一套 H3。以下 LoRA 依換角模式選擇，放入 `ComfyUI/models/loras/`，保留表中的檔名。兩個 BFS LoRA 合計約 **0.87 GiB**；Akatz V1.5 另約 **0.145 GiB（155 MB）**，未計入前面的基本模型總量。只需安裝所選模式的權重。
 
 | 本機檔名／下載連結 | 用途 | 大小 GiB |
 |---|---|---:|
 | [`minimax_h3_head_swap_v1.0_r32.safetensors`](https://huggingface.co/Alissonerdx/Minimax-H3-ComfyUI/resolve/e095edae3f4c69e18b4f27ed9e541078c87a8d98/loras/minimax_h3_head_swap_v1.0_r32.safetensors) | 換頭：臉部＋髮型 | 0.29 |
 | [`minimax_h3_character_swap_v1.0_ref2va_r64_gl.safetensors`](https://huggingface.co/Alissonerdx/Minimax-H3-ComfyUI/resolve/e095edae3f4c69e18b4f27ed9e541078c87a8d98/loras/minimax_h3_character_swap_v1.0_ref2va_r64_gl.safetensors) | 整個角色替換：外貌、身形與服裝 | 0.58 |
+| [`h3_character_swap_v1.5.safetensors`](https://huggingface.co/akatz-ai/MiniMax-H3-Character-Swap-LoRA/resolve/96ea3407b230b6f7df71c58c70e31df96bd7e533/h3_character_swap_v1.5.safetensors) | Akatz V1.5 整個角色替換：外貌、髮型、身形與服裝；20 步原生 | 0.145 |
 
 SHA256：
 
@@ -284,9 +285,20 @@ ea97bd1a8178460661055784d63b4cb560732196fd15d5d7f33bfd214b65ab00
 
 minimax_h3_character_swap_v1.0_ref2va_r64_gl.safetensors
 643a3fe63646fee5aebb181a7e1c9f8a1feb5f472709f37e22eeec290cbb75e3
+
+h3_character_swap_v1.5.safetensors
+8f2c3c3eba161df8d0c6099598b4730f641f5ce01e04cd16d2427cff8a35218f
 ```
 
-4／6／8 步還會使用前表的 `minimax_h3_turbo_v4_step600_ema.safetensors`；20 步使用原生採樣，不套用 Turbo。兩種模式都由 Studio 自動選取 BFS LoRA，不用再到「額外 LoRA」手動疊加。更新 Studio 程式後請重新啟動 ComfyUI、重新整理網頁，以載入新增的 `/h3-studio/swap/*` API。
+BFS 4／6／8 步還會使用前表的 `minimax_h3_turbo_v4_step600_ema.safetensors`；20 步使用原生採樣，不套用 Turbo。Akatz V1.5 目前只提供測試成功的 **20 步原生**流程，強度預設 **1.0**，來源影片接到 Ref2VA 參考影片輸入，不使用 BFS 的 Add Guide，也不套用 Turbo。Studio 會依模式自動選取換角 LoRA，不用再到「額外 LoRA」手動疊加。更新 Studio 程式後請重新啟動 ComfyUI、重新整理網頁，以載入更新的 `/h3-studio/swap/*` API。
+
+下載 Akatz V1.5（在專案根目錄執行）：
+
+```powershell
+curl.exe -L --fail --retry 3 -C - "https://huggingface.co/akatz-ai/MiniMax-H3-Character-Swap-LoRA/resolve/96ea3407b230b6f7df71c58c70e31df96bd7e533/h3_character_swap_v1.5.safetensors" -o ".\ComfyUI\models\loras\h3_character_swap_v1.5.safetensors"
+```
+
+Akatz 版本、授權與作者設定見 [模型頁](https://huggingface.co/akatz-ai/MiniMax-H3-Character-Swap-LoRA)。Studio 使用本機已測的 W4A8／20 步／`res_multistep`／`simple` 配置；作者推薦的 INT8／另一款 8 步 Turbo／`er_sde`／`normal` 配置尚未在這台機器驗證。V1.5 是完整角色替換，沒有獨立的只換臉模式。
 
 模型與範例來源：[BFS H3 模型倉庫](https://huggingface.co/Alissonerdx/Minimax-H3-ComfyUI)。模型權重不包含在 Git 倉庫內；使用時須同時遵循各資產授權及 H3 基礎模型條款。
 
@@ -586,33 +598,34 @@ H3 影片與 Qwen 圖片共用佇列：執行中可繼續編輯設定，按「�
 
 ---
 
-# 影片換角（BFS）
+# 影片換角（BFS／Akatz V1.5）
 
 創作頁的模式排列為「參考生影片 → **影片換角** → 影片畫質提升」。此功能共用 H3／Qwen 的生成佇列，不是一般參考圖生影片，也不是在首尾圖工作流直接掛上換角 LoRA。
 
 | 替換範圍 | 參考圖提供的內容 | 目標保留的原片內容 |
 |---|---|---|
-| 換頭 | 臉部、頭型與髮型 | 身體、服裝、動作、鏡頭與背景 |
-| 整個角色替換 | 人物外貌、髮型、身形、服裝與畫風 | 動作、鏡頭與場景，以及未指定替換的其他人物 |
+| BFS 換頭 | 臉部、頭型與髮型 | 身體、服裝、動作、鏡頭與背景 |
+| BFS 整個角色替換 | 人物外貌、髮型、身形、服裝與畫風 | 動作、鏡頭與場景，以及未指定替換的其他人物 |
+| Akatz V1.5 整個角色替換 | 人物外貌、髮型、身形、服裝與畫風 | 動作、鏡頭與場景，以及未指定替換的其他人物 |
 
 ## 操作
 
-1. 選「影片換角」，再選「換頭」或「整個角色替換」。
+1. 選「影片換角」，在「換角模式」選 BFS 換頭、BFS 整個角色替換或 Akatz V1.5 整個角色替換。
 2. 點選或拖入來源影片：接受 MP4／MOV／WebM，上限 **1 GB**。介面會顯示原片尺寸、時長與預計段數。
 3. 點選或拖入 PNG／JPEG／WebP 參考圖，上限 **32 MB**。換頭建議使用含完整髮型的頭部近照，可按「裁切」排除設定稿中的其他身形或服裝圖；裁切不會修改原始檔。
-4. 多人影片可在「要替換的人物」填入位置或衣著描述。系統會帶入對應的預設提示詞，可自行修改；切換替換範圍會重新套用該模式的預設。
-5. 步數可選 **4／6／8 步 Turbo** 或 **20 步原生**；解析度與參考生影片相同，提供 **480P／540P／原生 H3**。預設為換頭、20 步、480P、LoRA 強度 1.0；種子留白時隨機。
+4. 多人影片可在「要替換的人物」填入位置或衣著描述。系統會帶入對應的預設提示詞，可自行修改；切換換角模式會重新套用該模式的預設。
+5. BFS 步數可選 **4／6／8 步 Turbo** 或 **20 步原生**；Akatz V1.5 只提供 **20 步原生**，切換時會設為 20 步、強度 1.0。解析度與參考生影片相同，提供 **480P／540P／原生 H3**。初始預設為 BFS 換頭、20 步、480P、LoRA 強度 1.0；種子留白時隨機。
 6. 畫面比例自動跟隨來源影片，不提供手動比例選單。H3 生成畫布需對齊 32 像素，輸出會補正播放比例；輸出幀率統一為 **24 fps**，並合回來源音軌，不沿用原片的任意幀率。
 7. 按「加入生成佇列」。每步降溫預設 15 秒、最低 5 秒，最後一步不暫停。完成後可在本頁預覽、下載，也會加入「作品」頁；「再做一次」會載回來源、參考圖與生成設定。
 
-來源影片透過 **Add Guide** 提供對齊的影片引導，角色圖走 Ref2VA 圖片參考。15 秒以內整段一次生成；超過 15 秒則按約 15 秒分段，最後一段依剩餘時長生成。模型要求的補齊幀會在合併時裁除，正常完成後以原片時長為準。
+BFS 來源影片透過 **Add Guide** 提供對齊的影片引導；Akatz V1.5 則接到 **Ref2VA 參考影片**輸入。兩者的角色圖都走 Ref2VA 圖片參考。15 秒以內整段一次生成；超過 15 秒則按約 15 秒分段，最後一段依剩餘時長生成。模型要求的補齊幀會在合併時裁除，正常完成後以原片時長為準。作品與佇列會顯示所選換角模式，「再做一次」會恢復對應模式。
 
 生成中可按「**完成目前這段後停止**」：目前已提交的段落仍會完成，之後不再提交新段，已完成部分會合併並保留相應的原音軌。若後續段落失敗，也會嘗試保留先前完成的部分。若尚無完成片段，就不會產生成品。
 
 ## 限制與驗證範圍
 
 - 換角會重新生成畫面，不能保證其他區域逐像素不變；小臉、遮擋、快速動作、切鏡與長片可能造成身分、表情或動作漂移。分段接縫處也可能出現人物或光線不連續。
-- 已完成本機換頭的原生 20 步與 Turbo 8 步短片生成；這不代表兩種替換模式、全部步數、全部解析度及長片都經過完整實測。原生 H3 解析度的長片更吃顯存，12 GB 顯卡建議先選 480P。
+- 已完成本機 BFS 換頭的原生 20 步與 Turbo 8 步短片生成；另於 2026-10-18 使用同一支 2.33 秒白模片段、角色圖、種子與 480×832 尺寸，完成 BFS 整個角色替換與 Akatz V1.5 的 20 步測試，皆有換上參考角色。兩者各用對應的影片接法與提示詞，不是只變更 LoRA 的模型排名測試；耗時分別約 332／335 秒。V1.5 直接套 BFS Add Guide／8 步配置的小樣未成功換角。全部解析度、長片、多人及 V1.5 只換臉尚未經過完整實測；12 GB 顯卡建議先選 480P 短片。
 - 原音軌會合回成品，但不代表模型能精準保留口型同步。來源與角色圖只送往本機 ComfyUI。
 - 佇列與分段後處理由目前網頁維持，請等整筆任務完成後再重新整理或關閉頁面。來源與參考圖快取若已刪除，「再做一次」需重新上傳。
 

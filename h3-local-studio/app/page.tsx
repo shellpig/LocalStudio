@@ -46,6 +46,7 @@ import { audioDownloadUrl } from "@/lib/tts";
 import TtsStudio from "./tts-studio";
 import EnhanceStudio from "./enhance-studio";
 import SwapStudio from "./swap-studio";
+import { SWAP_LABELS } from "@/lib/swap";
 import RTXStudio from "./rtx-studio";
 import GenerationQueuePanel from "./generation-queue-panel";
 import LoraPicker from "./lora-picker";
@@ -1945,7 +1946,7 @@ function VideoGrid({ videos, onDelete, onExtend, onRedo, onReuseSeed, emptyText 
                 <span title={video.filename}>{video.filename}</span>
                 {video.enhanced && <small title={`來源：${video.enhancementSource}`}>畫質提升 · 720p · {video.enhancementStrength}%</small>}
                 {video.rtxOperation && <small title={`來源：${video.rtxSource}`}>RTX {video.rtxOperation === "fps" ? "補幀" : "超解析"} · {video.rtxMultiplier} 倍 · {video.width} × {video.height} · {video.fps} fps</small>}
-                {video.swapMode && <small title={`來源：${video.swapSource}`}>{video.swapMode === "head" ? "換頭" : "整個角色替換"} · {video.steps} 步 · {video.swapCompletedSegments}／{video.swapTotalSegments} 段</small>}
+                {video.swapMode && <small title={`來源：${video.swapSource}`}>{SWAP_LABELS[video.swapMode]} · {video.steps} 步 · {video.swapCompletedSegments}／{video.swapTotalSegments} 段</small>}
                 {video.generationSeconds !== undefined && <small>耗時 {video.generationSeconds} 秒</small>}
                 {video.extraLoras?.length ? (
                   <small title={video.extraLoras.map((l) => `${l.name} @${l.strength}`).join(", ")}>

@@ -44,6 +44,61 @@ test("both swap modes use aligned guides and the correct sampling path for 4/6/8
   }
 });
 
+test("Akatz V1.5 uses reference video conditioning and native sampling without BFS guides or Turbo", () => {
+  const prompt = buildSwapPrompt("akatz-v1.5", "the person on the left");
+  assert.match(prompt, /the person on the left.*<Video 1>/);
+  assert.match(prompt, /<Picture 1>/);
+  assert.doesNotMatch(prompt, /Add Guide|body_swap/);
+  const graph = buildSwapWorkflow(input, 0, { ...options, mode: "akatz-v1.5", prompt });
+  assert.equal(graph["2"].inputs.lora_name, "h3_character_swap_v1.5.safetensors");
+  assert.deepEqual(graph["2"].inputs.model, ["1", 0]);
+  assert.deepEqual(graph["13"].inputs["ref_videos.ref_video_0"], ["12", 0]);
+  assert.deepEqual(graph["13"].inputs["ref_images.ref_image_0"], ["10", 0]);
+  assert.deepEqual(graph["15"].inputs.conditioning, ["13", 0]);
+  assert.equal(graph["14"], undefined);
+  assert.equal(graph["25"], undefined);
+  assert.equal(graph["16"].inputs.sampler_name, "res_multistep");
+  assert.equal(graph["17"].class_type, "H3CooledSampler");
+  assert.equal(graph["18"].inputs.scheduler, "simple");
+  assert.equal(graph["18"].inputs.steps, 20);
+  for (const steps of [4, 6, 8]) assert.throws(() => buildSwapWorkflow(input, 0, { ...options, mode: "akatz-v1.5", steps }), /設定無效/);
+});
+
+test("Akatz jobs check their own LoRA, preserve settings and finish without requiring Turbo", async () => {
+  const previous = globalThis.fetch;
+  const saved = { ...options, mode: "akatz-v1.5", prompt: buildSwapPrompt("akatz-v1.5"), target: "the woman" };
+  let prepared = false, submitted = false;
+  globalThis.fetch = async (url, init) => {
+    const path = new URL(url).pathname;
+    if (path.startsWith("/object_info")) return Response.json({ LoraLoaderModelOnly: { input: { required: { lora_name: [[SWAP_LORAS["akatz-v1.5"]]] } } } });
+    if (path.endsWith("/prepare")) {
+      prepared = true;
+      assert.deepEqual(JSON.parse(init.body.get("settings")), { ...saved, width: 480, height: 864 });
+      return Response.json({ ...input, segments: input.segments.slice(0, 1) });
+    }
+    if (path === "/prompt") {
+      submitted = true;
+      assert(prepared);
+      const graph = JSON.parse(init.body).prompt;
+      assert.deepEqual(graph["13"].inputs["ref_videos.ref_video_0"], ["12", 0]);
+      assert.equal(graph["25"], undefined);
+      return Response.json({ prompt_id: "akatz" });
+    }
+    if (path === "/history/akatz") return Response.json({ akatz: { status: { completed: true }, outputs: { "24": { images: [{ filename: `${input.sourceId}_seg0_00001_.mp4`, subfolder: "h3_swap_cache", type: "output" }] } } } });
+    if (path.endsWith("/finish")) {
+      assert(submitted);
+      assert.equal(JSON.parse(init.body).results.length, 1);
+      return Response.json({ filename: "akatz.mp4", swapMode: saved.mode, prompt: saved.prompt, steps: 20 });
+    }
+    throw new Error(path);
+  };
+  try {
+    const completed = await runSwap(new File(["video"], "source.mp4"), new File(["image"], "reference.png"), input, saved, { stop: false }, () => {});
+    assert.equal(completed.result.swapMode, "akatz-v1.5");
+    assert.equal(completed.result.steps, 20);
+  } finally { globalThis.fetch = previous; }
+});
+
 test("stop after current segment keeps completed work without submitting the next segment", async () => {
   const previous = globalThis.fetch;
   const control = { stop: false };

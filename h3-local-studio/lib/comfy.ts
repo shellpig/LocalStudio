@@ -35,7 +35,7 @@ export type GeneratedVideo = {
   rtxMultiplier?: number;
   rtxSource?: string;
   fps?: number;
-  swapMode?: "head" | "character";
+  swapMode?: import("./swap").SwapMode;
   swapSource?: string;
   swapSourceFile?: string;
   swapReferenceFile?: string;

@@ -4,7 +4,7 @@
 
 import { DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_COOLDOWN_SECONDS, GeneratedVideo, inputImageUrl, MIN_COOLDOWN_SECONDS, outputUrl } from "@/lib/comfy";
-import { buildSwapPrompt, runSwap, SWAP_SEGMENT_SECONDS, SwapControl, SwapMode, SwapOptions, SwapResolution, swapDimensions } from "@/lib/swap";
+import { buildSwapPrompt, runSwap, SWAP_LABELS, SWAP_SEGMENT_SECONDS, SwapControl, SwapMode, SwapOptions, SwapResolution, swapDimensions } from "@/lib/swap";
 import { cropImageFile, ImageCropper } from "./image-cropper";
 
 const isVideoFile = (file: File) => ["video/mp4", "video/webm", "video/quicktime"].includes(file.type) || (!file.type && /\.(mp4|mov|webm)$/i.test(file.name));
@@ -57,7 +57,7 @@ export default function SwapStudio({ connected, disabled, enqueue, onComplete, i
         setDimensions({ width: 0, height: 0, duration: 0 });
         setVideo(files[0]); setReference(files[1]); setOriginalReference(files[1]);
         setMode(work.swapMode!); setPrompt(work.prompt ?? buildSwapPrompt(work.swapMode!));
-        setSteps(([4, 6, 8, 20].includes(work.steps ?? 0) ? work.steps : 20) as SwapOptions["steps"]);
+        setSteps((work.swapMode === "akatz-v1.5" ? 20 : [4, 6, 8, 20].includes(work.steps ?? 0) ? work.steps : 20) as SwapOptions["steps"]);
         setResolution((["p480", "p540", "native"].includes(work.resolution ?? "") ? work.resolution : "p480") as SwapResolution);
         setStrength(work.swapStrength ?? 1); setSeed(work.seed === undefined ? "" : String(work.seed)); setTarget(work.swapTarget ?? "");
         setCooldown(work.cooldownSeconds ?? DEFAULT_COOLDOWN_SECONDS); setError(""); setResult(null);
@@ -101,7 +101,7 @@ export default function SwapStudio({ connected, disabled, enqueue, onComplete, i
     const size = { ...dimensions };
     const currentControl = { stop: false };
     setStatus("已加入生成佇列。"); setError("");
-    enqueue(`H3 換角 · ${mode === "head" ? "換頭" : "整個角色替換"} · ${source.name}`, async (onStatus) => {
+    enqueue(`H3 換角 · ${SWAP_LABELS[mode]} · ${source.name}`, async (onStatus) => {
       setBusy(true); control.current = currentControl; setStopping(false); setError(""); setResult(null);
       try {
         const completed = await runSwap(source, image, size, options, currentControl, (message) => { setStatus(message); onStatus(message); });
@@ -120,7 +120,8 @@ export default function SwapStudio({ connected, disabled, enqueue, onComplete, i
     <div className="enhancement-fields swap-fields">
       <h2>影片換角</h2>
       <p>來源影片提供動作、鏡頭與場景；參考圖提供新人物。15 秒以內整段一次生成；超過會分段（每段最長 15 秒），完成後合回原音軌。</p>
-      <label><span>替換範圍</span><select value={mode} disabled={locked} onChange={(event) => { const value = event.target.value as SwapMode; setMode(value); setPrompt(buildSwapPrompt(value, target)); }}><option value="head">換頭 · 臉部＋髮型，保留原身體與服裝</option><option value="character">整個角色替換 · 外貌、身形與服裝</option></select></label>
+      <label><span>換角模式</span><select value={mode} disabled={locked} onChange={(event) => { const value = event.target.value as SwapMode; setMode(value); setPrompt(buildSwapPrompt(value, target)); if (value === "akatz-v1.5") { setSteps(20); setStrength(1); } }}><option value="head">BFS 換頭 · 臉部＋髮型，保留原身體與服裝</option><option value="character">BFS 整個角色替換 · 外貌、身形與服裝</option><option value="akatz-v1.5">Akatz V1.5 整個角色替換 · 外貌、身形與服裝</option></select></label>
+      {mode === "akatz-v1.5" && <p>Akatz V1.5 會替換整個角色，包含臉部、髮型與服裝。目前提供 20 步原生生成，建議強度 1.0，先以短片測試。</p>}
       <div className="swap-upload-grid">
         <div className="swap-upload">
           <span>來源影片（MP4／MOV／WebM，上限 1 GB）</span>
@@ -165,7 +166,7 @@ export default function SwapStudio({ connected, disabled, enqueue, onComplete, i
       <label><span>提示詞</span><textarea rows={12} value={prompt} disabled={locked} onChange={(event) => setPrompt(event.target.value)} /></label>
       <button type="button" className="prompt-restore-button" disabled={locked} onClick={() => setPrompt(buildSwapPrompt(mode, target))}>套用換角預設提示詞</button>
       <div className="swap-controls">
-        <label><span>步數</span><select value={steps} disabled={locked} onChange={(event) => setSteps(Number(event.target.value) as SwapOptions["steps"])}><option value={4}>4 步 · Turbo</option><option value={6}>6 步 · Turbo</option><option value={8}>8 步 · Turbo</option><option value={20}>20 步 · 原生</option></select></label>
+        <label><span>步數</span><select value={steps} disabled={locked} onChange={(event) => setSteps(Number(event.target.value) as SwapOptions["steps"])}>{mode !== "akatz-v1.5" && <><option value={4}>4 步 · Turbo</option><option value={6}>6 步 · Turbo</option><option value={8}>8 步 · Turbo</option></>}<option value={20}>20 步 · 原生</option></select></label>
         <label><span>解析度</span><select value={resolution} disabled={locked} onChange={(event) => setResolution(event.target.value as SwapResolution)}><option value="p480">{label("p480")} · 480P</option><option value="p540">{label("p540")} · 540P</option><option value="native">{label("native")} · 原生 H3</option></select></label>
         <label><span>LoRA 強度</span><input type="number" min={0} max={2} step={0.05} value={strength} disabled={locked} onChange={(event) => setStrength(Number(event.target.value))} /></label>
         <label><span>種子（留白隨機）</span><input type="number" min={0} max={Number.MAX_SAFE_INTEGER} step={1} value={seed} disabled={locked} onChange={(event) => setSeed(event.target.value)} /></label>
@@ -175,7 +176,7 @@ export default function SwapStudio({ connected, disabled, enqueue, onComplete, i
       {busy && <button type="button" disabled={stopping} onClick={() => { if (control.current) control.current.stop = true; setStopping(true); }}>{stopping ? "將保留已完成片段並停止" : "完成目前這段後停止"}</button>}
       <p role="status">{status}</p>
       {error && <p className="error-message" role="alert">{error}</p>}
-      {result && <div><h3>{result.swapMode === "head" ? "換頭" : "整個角色替換"} · {result.duration?.toFixed(2)} 秒</h3><video controls src={outputUrl(result)} aria-label="影片換角成品" /><a href={outputUrl(result)} download={result.filename}>下載成品</a></div>}
+      {result && <div><h3>{result.swapMode && SWAP_LABELS[result.swapMode]} · {result.duration?.toFixed(2)} 秒</h3><video controls src={outputUrl(result)} aria-label="影片換角成品" /><a href={outputUrl(result)} download={result.filename}>下載成品</a></div>}
     </div>
     {cropOpen && originalReference && <ImageCropper file={originalReference} title="裁切換角參考圖" hint="換頭請保留臉部與完整髮型；角色替換可保留全身。" onCancel={() => setCropOpen(false)} onApply={(rect) => { void cropImageFile(originalReference, rect).then((file) => { setReference(file); setCropOpen(false); }).catch((caught) => setError(String(caught))); }} />}
   </section>;

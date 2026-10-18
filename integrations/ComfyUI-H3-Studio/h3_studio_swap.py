@@ -1,4 +1,4 @@
-"""Prepare aligned BFS guides and assemble generated segments with source audio."""
+"""Prepare BFS guides or Akatz reference videos and assemble segments with source audio."""
 
 import asyncio
 from fractions import Fraction
@@ -25,10 +25,12 @@ def source_folder(source_id):
 
 
 def validate_settings(data):
-    if not isinstance(data, dict) or data.get("mode") not in {"head", "character"}:
-        raise ValueError("請選擇換頭或整個角色替換。")
+    if not isinstance(data, dict) or data.get("mode") not in {"head", "character", "akatz-v1.5"}:
+        raise ValueError("請選擇有效的換角模式。")
     if type(data.get("steps")) is not int or data["steps"] not in {4, 6, 8, 20}:
         raise ValueError("步數必須為 4、6、8 或 20。")
+    if data["mode"] == "akatz-v1.5" and data["steps"] != 20:
+        raise ValueError("Akatz V1.5 目前僅支援 20 步原生採樣。")
     if data.get("resolution") not in {"p480", "p540", "native"}:
         raise ValueError("無效的解析度。")
     for key in ("width", "height"):

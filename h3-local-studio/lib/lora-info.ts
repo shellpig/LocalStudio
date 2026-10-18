@@ -18,6 +18,11 @@ const bounce: LoraInfo = {
 const compatibleNote = "Studio 已支援此權重命名；實際效果仍需成片驗證。";
 
 const catalog: Record<string, LoraInfo> = {
+  "h3_character_swap_v1.5.safetensors": {
+    description: "Akatz V1.5 整個角色替換，移植參考角色的外貌、髮型、身形與服裝。",
+    weight: "1.0。",
+    note: "請在「影片換角」選 Akatz V1.5，由專用流程自動套用，不需加入額外 LoRA。",
+  },
   "minimax_h3_turbo_v4_step600_ema.safetensors": {
     description: "讓 H3 用 4–8 步生成影片與同步聲音；影片模式會自動套用。",
     weight: "1.0。",
