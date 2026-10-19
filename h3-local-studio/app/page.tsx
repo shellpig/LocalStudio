@@ -9,6 +9,7 @@ import {
   deleteVideo,
   GeneratedVideo,
   GenerationOptions,
+  H3AttentionMethod,
   ExtraLora,
   getAvailableLoras,
   getRecentVideos,
@@ -128,6 +129,7 @@ export default function Home() {
   const [connected, setConnected] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [profile, setProfile] = useState<GenerationOptions["profile"]>("fast");
+  const [attentionMethod, setAttentionMethod] = useState<H3AttentionMethod>("sage");
   const [resolution, setResolution] = useState<GenerationOptions["resolution"]>("safe");
   const [duration, setDuration] = useState(5);
   const [aspect, setAspect] = useState<GenerationOptions["aspect"]>("16:9");
@@ -536,6 +538,7 @@ export default function Home() {
           )
         : prompt.trim(),
       profile, resolution, duration, aspect, sound: soundEnabled, sourceMode,
+      attentionMethod: sourceMode === "reference" ? "sage" : attentionMethod,
       cooldownSeconds: Math.max(MIN_COOLDOWN_SECONDS, cooldownSeconds),
       seed: seed.trim() ? Number(seed) : undefined,
       extraLoras: extraLoras.length ? extraLoras.map(({ name, strength }) => ({ name, strength })) : undefined,
@@ -913,6 +916,7 @@ export default function Home() {
     setPromptBeforeOptimization(null);
     setOptimizedPromptMode(null);
     setProfile(video.profile === "cooled-fast" ? "fast" : video.profile);
+    setAttentionMethod(video.attentionMethod ?? "sage");
     setResolution(video.resolution);
     setDuration(nextDuration);
     setAspect(video.aspect ?? aspectFromDimensions(video.width, video.height));
@@ -941,6 +945,7 @@ export default function Home() {
     if (!video.extendable || !video.profile || !video.resolution || video.sound === undefined || !video.width || !video.height) return;
     setRTXMode(false); setEnhancementMode(false); setSwapMode(false);
     setContinuationSource(video);
+    setAttentionMethod(video.attentionMethod ?? "sage");
     setSourceMode(video.inputMode === "reference" ? "reference" : "text");
     setProfile(video.inputMode === "reference" ? video.profile === "cooled-fast" ? "fast" : video.profile : "quality");
     setResolution(video.resolution);
@@ -1348,6 +1353,13 @@ export default function Home() {
                       )}
                     </select>
                   </label>
+                  <label className="attention-control">
+                    <span>注意力（影片）</span>
+                    <select value={sourceMode === "reference" ? "sage" : attentionMethod} onChange={(event) => setAttentionMethod(event.target.value as H3AttentionMethod)} disabled={sourceMode === "reference"}>
+                      <option value="sage">SageAttention（原有）</option>
+                      <option value="sol">sol-attn + Comfy Kitchen</option>
+                    </select>
+                  </label>
                   <label>
                     <span>解析度</span>
                     <select value={resolution} onChange={(event) => setResolution(event.target.value as GenerationOptions["resolution"])} disabled={Boolean(continuationSource) || profile === "safe-long"}>
@@ -1468,6 +1480,7 @@ export default function Home() {
                 )}
                 {sourceMode === "reference" && <span> · Ref2VA W4A8 · {continuationSource?.inputMode === "reference" ? continuationSource.referenceFiles?.length ?? 0 : referenceImages.filter((reference) => reference.file).length} 張參考圖 · Turbo {referenceVideoSteps(profile)} 步</span>}
                 <span> · 每步降溫 {cooldownSeconds} 秒 ×{cooldownSteps} 步 ≈ {cooldownSeconds * cooldownSteps} 秒冷卻</span>
+                {sourceMode === "reference" ? <span> · 參考生影片使用 SageAttention，sol-attn 尚不相容 LongMedia 記憶體分塊</span> : attentionMethod === "sol" && <span> · sol-attn 稀疏注意力：速度與畫面會隨片長、解析度而變化，短序列會使用一般注意力</span>}
                 {profile === "safe-long" && <span> · 安全長片會低解析生成，再以 CPU 放大為 480P；畫面較柔且不支援延伸</span>}
                 {profile === "low-vram" && <span> · Turbo LoRA 改用 merge 模式，省下採樣時最大的一筆顯存配置；長片較不易爆顯存，畫面略柔</span>}
                 {resolution !== "safe" && <span> · 較高解析度的顯存與時間需求較高</span>}
@@ -1984,6 +1997,7 @@ function VideoGrid({ videos, onDelete, onExtend, onRedo, onRefine, onReuseSeed, 
                 {video.rtxOperation && <small title={`來源：${video.rtxSource}`}>RTX {video.rtxOperation === "fps" ? "補幀" : "超解析"} · {video.rtxMultiplier} 倍 · {video.width} × {video.height} · {video.fps} fps</small>}
                 {video.swapMode && <small title={`來源：${video.swapSource}`}>{SWAP_LABELS[video.swapMode]} · {video.steps} 步 · {video.swapCompletedSegments}／{video.swapTotalSegments} 段</small>}
                 {video.generationSeconds !== undefined && <small>耗時 {video.generationSeconds} 秒</small>}
+                {video.attentionMethod && <small>注意力 · {video.attentionMethod === "sol" ? "sol-attn + Comfy Kitchen" : "SageAttention"}</small>}
                 {video.extraLoras?.length ? (
                   <small title={video.extraLoras.map((l) => `${l.name} @${l.strength}`).join(", ")}>
                     LoRA {video.extraLoras.map((l) => `${l.name.replace(/\.safetensors$/, "")} @${l.strength}`).join("、")}

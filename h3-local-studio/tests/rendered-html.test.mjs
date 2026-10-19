@@ -2,6 +2,79 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+test("attention selection changes only the H3 attention chain across profiles and frame inputs", async () => {
+  const { buildWorkflow, buildReferenceWorkflow, buildImageWorkflow } = await import("../lib/comfy.ts");
+  const base = { prompt: "A person waves.", resolution: "p480", duration: 5, aspect: "3:4", sound: true, seed: 42 };
+  for (const profile of ["cooled-turbo-4", "fast", "cooled-turbo-8", "quality", "safe-long", "low-vram"]) {
+    for (const anchors of [[], ["first.png"], [undefined, "last.png"], ["first.png", "last.png"]]) {
+      const options = { ...base, profile, extraLoras: [{ name: "custom.safetensors", strength: 0.5 }] };
+      const old = buildWorkflow(options, ...anchors);
+      assert.deepEqual(buildWorkflow({ ...options, attentionMethod: "sage" }, ...anchors), old);
+      const fresh = buildWorkflow({ ...options, attentionMethod: "sol" }, ...anchors);
+      assert.equal(fresh["119"].class_type, "ModelAttentionBackend");
+      assert.deepEqual(fresh["119"].inputs.model, old["119"].inputs.model);
+      assert.equal(fresh["119"].inputs.attention, "comfy kitchen attention");
+      assert.equal(fresh["118"].class_type, "BlockSparseAttention");
+      assert.deepEqual(fresh["118"].inputs, {
+        model: ["119", 0], selection: "sol-attn", "selection.tau": 1.3,
+        start_percent: 0.2, end_percent: 1, dense_blocks: "", min_tokens: 12288,
+        extra_tokens: 256, sink_conditioning: "exact_kv_and_rows", verbose: false,
+      });
+      assert.deepEqual(fresh["16"].inputs.model, ["118", 0]);
+      assert(!Object.values(fresh).some((node) => node.class_type === "MiniMaxH3MemoryEfficientSageAttentionPatch"));
+      for (const [id, original] of Object.entries(old)) {
+        if (id === "119") continue;
+        const actual = structuredClone(fresh[id]);
+        if (id === "16") actual.inputs.model = original.inputs.model;
+        assert.deepEqual(actual, original, `unrelated node ${id}, profile ${profile}`);
+      }
+    }
+  }
+  assert.throws(() => buildReferenceWorkflow({ ...base, profile: "fast", attentionMethod: "sol" }, ["ref.png"]), /LongMedia/);
+  assert.equal(buildReferenceWorkflow({ ...base, profile: "fast" }, ["ref.png"])["119"].class_type, "MiniMaxH3MemoryEfficientSageAttentionPatch");
+  assert.deepEqual(buildImageWorkflow({ ...base, profile: "fast", attentionMethod: "sol" }), buildImageWorkflow({ ...base, profile: "fast" }));
+});
+
+test("video attention persists in metadata, survives history and extension, and can switch back", async () => {
+  const { createVideo, getRecentVideos } = await import("../lib/comfy.ts");
+  const previousFetch = globalThis.fetch;
+  const graphs = [], saved = [];
+  globalThis.fetch = async (url, init) => {
+    const path = new URL(url).pathname;
+    if (path === "/upload/image") return Response.json({ name: "first.png" });
+    if (path === "/prompt") {
+      graphs.push(JSON.parse(init.body).prompt);
+      return Response.json({ prompt_id: `attention-${graphs.length}` });
+    }
+    if (path.startsWith("/history/")) {
+      const id = path.split("/").pop();
+      return Response.json({ [id]: { status: { completed: true }, outputs: { out: { videos: [{ filename: `${id}.mp4`, subfolder: "video", type: "output" }] } } } });
+    }
+    if (path === "/h3-studio/output-metadata") { saved.push(JSON.parse(init.body)); return Response.json({ ok: true }); }
+    if (path === "/h3-studio/concat") return Response.json({ ...JSON.parse(init.body).metadata, filename: "extended.mp4", subfolder: "video", type: "output" });
+    if (path === "/history") return Response.json({ test: { prompt: [0, "test", graphs[0]], outputs: { out: { videos: [{ filename: "history.mp4", subfolder: "video", type: "output" }] } } } });
+    if (path === "/h3-studio/outputs") return Response.json({ outputs: [{ filename: "history.mp4", subfolder: "video", type: "output" }] });
+    throw new Error(`Unexpected request: ${path}`);
+  };
+  try {
+    const options = { prompt: "A person waves.", profile: "cooled-turbo-8", resolution: "p480", duration: 5, aspect: "3:4", sound: true, seed: 42, attentionMethod: "sol" };
+    const original = await createVideo(options, new File(["image"], "first.png"), null, () => {});
+    assert.equal(original.attentionMethod, "sol");
+    assert.equal(saved[0].attentionMethod, "sol");
+    const [history] = await getRecentVideos();
+    assert.equal(history.attentionMethod, "sol");
+    const continued = await createVideo({ ...options, attentionMethod: undefined, continuationSource: original }, null, null, () => {});
+    assert.equal(continued.attentionMethod, "sol");
+    assert.equal(graphs[1]["118"].class_type, "BlockSparseAttention");
+    assert.equal(graphs[1]["9"].inputs.steps, 20);
+    assert.equal(graphs[1]["142"].class_type, "MiniMaxH3MotionContext");
+    const switched = await createVideo({ ...options, attentionMethod: "sage", continuationSource: original }, null, null, () => {});
+    assert.equal(switched.attentionMethod, "sage");
+    assert.equal(graphs[2]["118"], undefined);
+    assert.equal(graphs[2]["119"].class_type, "MiniMaxH3MemoryEfficientSageAttentionPatch");
+  } finally { globalThis.fetch = previousFetch; }
+});
+
 test("six-step anchored reference video preserves dimensions and profile through generation, metadata and continuation", async () => {
   const { createVideo, referenceVideoSteps, resolveOutputDimensions } = await import(new URL("../lib/comfy.ts", import.meta.url));
   const previousFetch = globalThis.fetch;

@@ -44,6 +44,12 @@ class Request:
 
 
 class ReferenceAnchorTests(unittest.IsolatedAsyncioTestCase):
+    def test_attention_metadata_keeps_supported_methods_and_legacy_absence(self):
+        for method in ("sage", "sol"):
+            self.assertEqual(namespace["validated_metadata"]({"attentionMethod": method})["attentionMethod"], method)
+        for data in ({}, {"attentionMethod": "unknown"}):
+            self.assertNotIn("attentionMethod", namespace["validated_metadata"](data))
+
     async def test_request_accepts_all_four_anchor_combinations(self):
         for first, last in [(False, False), (True, False), (False, True), (True, True)]:
             with self.subTest(first=first, last=last), tempfile.TemporaryDirectory() as directory:

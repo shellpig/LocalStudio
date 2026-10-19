@@ -6,6 +6,7 @@ Windows 本機版 MiniMax H3 影片製作介面。影片、Qwen 圖像、SeedVR2
 
 - 文字轉影片（T2VA）
 - 首尾圖轉影片（I2VA / FL2VA / L2VA）
+- H3 影片注意力可選 SageAttention（預設）或 sol-attn＋Comfy Kitchen；參考生影片暫維持 SageAttention
 - 參考圖轉影片（Ref2VA），最多 9 個參考項目，每項可設圖片、`@標籤` 與說明
 - 影片延伸：沿用原本的人物與場景，接續前一段的最後畫面，裁掉重疊幀後合併
 - 官方 H3 Prompt 優化：把一句白話描述改寫成 MiniMax 官方格式，可選 Codex 或 Grok 執行
@@ -750,6 +751,31 @@ H3 影片（含 BFS 換角）、Qwen 圖片、RTX 提升與 Drama3 工作共用�
 | 安全長片 | Turbo 6 步、LoRA merge、低解析生成與分塊解碼，再以 CPU 放大成 480P；不支援 H3 動態延伸 |
 
 參考生影片提供 4步／6步／8步，使用 Ref2VA W4A8／LongMedia 流程。COOLED FAST 與低顯存已從新任務選單移除，但仍保留舊作品設定的讀取相容性。H3 降溫預設 15 秒、最低 5 秒；Qwen 預設 0 秒，可自行增加，且跳過最後一步後的暫停。
+
+## 影片注意力選擇
+
+在創作頁「模式」旁的「**注意力（影片）**」選擇：
+
+| 選項 | 行為與適用範圍 |
+|---|---|
+| SageAttention（原有） | 預設，沿用 H3 省顯存 SageAttention patch。舊作品未保存注意力欄位時也使用此選項 |
+| sol-attn + Comfy Kitchen | 使用稀疏注意力，未啟用稀疏的步數或短序列使用 Comfy Kitchen INT8 一般注意力；可用於文字、首尾圖影片與一般影片延伸 |
+
+切換注意力不會改變所選步數、模型、LoRA、解析度、片長、種子與每步降溫。方法會隨加入佇列時的設定保存，作品列表會顯示；「再做一次」與一般影片延伸會載回原方法，送出前仍可切換。更新此功能後須**重啟主 ComfyUI**，才能載入後端的注意力設定保存欄位。
+
+新方法固定使用 `sol-attn`、`tau=1.3`、`start_percent=0.2`、`end_percent=1.0`、`min_tokens=12288`、`extra_tokens=256`、`sink_conditioning=exact_kv_and_rows`，不與原 SageAttention patch 疊加。需要本機 ComfyUI 提供 `BlockSparseAttention`、`ModelAttentionBackend` 及對應 GPU kernel；本機 RTX 4080 Laptop、comfy-kitchen 0.2.35 已確認可用。較短序列可能完全不進入稀疏運算，實際速度及畫面差異需依設定比較。
+
+**參考生影片（包含 Ref2VA 延伸）暫不提供新方法。** 原因是 LongMedia 遇到已有的稀疏區塊補丁時會跳過原本的記憶體分塊處理；介面停用此選項並維持 SageAttention。H3「生成圖片」、Qwen 圖像、影片換角與人臉精修也維持各自原有注意力接法。
+
+2026-10-19 本機單次對照：同一張人物首圖、prompt、種子，Turbo 8 步、480×640、24 fps、約 5 秒，每步降溫 15 秒。兩組原生皆輸出 124 幀（約 5.17 秒），Studio 保留模型原生長度，不為湊整秒額外裁切。
+
+| 項目 | SageAttention | sol-attn＋Comfy Kitchen |
+|---|---:|---:|
+| ComfyUI 總耗時（含 120 秒冷卻） | 294 秒 | 254 秒 |
+| 採樣階段扣除固定冷卻 | 134 秒 | 102 秒 |
+| 整張顯卡使用量峰值（取樣觀察） | 11,462 MiB | 11,474 MiB |
+
+此例新方法總耗時少約 14%，確認有實際進入稀疏運算；顯存沒有明顯下降。抽查兩組均完成放低手機、微笑與揮手，表情與構圖略有不同。這是單次結果，不代表所有片長、解析度、步數與 LoRA 都有相同加速或品質。
 
 ---
 

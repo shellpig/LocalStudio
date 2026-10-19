@@ -3,6 +3,8 @@ const COMFY_URL = "http://127.0.0.1:8188";
 type GraphNode = { class_type: string; inputs: Record<string, unknown>; _meta?: { title: string } };
 type PromptGraph = Record<string, GraphNode>;
 
+export type H3AttentionMethod = "sage" | "sol";
+
 export type GenerationOptions = {
   faceRefine?: import("./face-refine").FaceRefineOptions;
   prompt: string;
@@ -14,6 +16,7 @@ export type GenerationOptions = {
   outputKind?: "video" | "image";
   /** Seconds paused after every sampling step to keep the laptop from overheating (min 15). */
   cooldownSeconds?: number;
+  attentionMethod?: H3AttentionMethod;
   duration: number;
   aspect: "16:9" | "4:3" | "1:1" | "3:4" | "9:16";
   /** Reuse an exact seed. Omitted means a fresh random one. */
@@ -75,6 +78,7 @@ export type GeneratedVideo = {
   qwenCamera?: QwenCamera;
   cooldownSeconds?: number;
   generationSeconds?: number;
+  attentionMethod?: H3AttentionMethod;
   seed?: number;
   extraLoras?: ExtraLora[];
   promptId?: string;
@@ -388,6 +392,17 @@ export function buildWorkflow(options: GenerationOptions, uploadedFirstImage?: s
     graph["131"] = node("LoadImage", { image: uploadedLastImage }, "尾幀圖片");
     graph["104"].inputs.last_frame = ["131", 0];
   }
+  if (options.attentionMethod === "sol") {
+    graph["119"] = node("ModelAttentionBackend", {
+      model: graph["119"].inputs.model, attention: "comfy kitchen attention",
+    }, "Comfy Kitchen 注意力後端");
+    graph["118"] = node("BlockSparseAttention", {
+      model: ["119", 0], selection: "sol-attn", "selection.tau": 1.3,
+      start_percent: 0.2, end_percent: 1, dense_blocks: "", min_tokens: 12288,
+      extra_tokens: 256, sink_conditioning: "exact_kv_and_rows", verbose: false,
+    }, "sol-attn 稀疏注意力");
+    graph["16"].inputs.model = ["118", 0];
+  }
   return graph;
 }
 
@@ -414,6 +429,7 @@ export function referenceVideoSteps(profile: GenerationOptions["profile"]): numb
 }
 
 export function buildReferenceWorkflow(options: GenerationOptions, uploadedReferenceImages: string[], continuationFrame?: string, firstFrame?: string, lastFrame?: string): PromptGraph {
+  if (options.attentionMethod === "sol") throw new Error("參考生影片的 LongMedia 記憶體分塊與 sol-attn 尚不相容，請使用 SageAttention。");
   if (continuationFrame && uploadedReferenceImages.length > 8) {
     throw new Error("Ref2VA 延伸最多可沿用 8 張參考圖。 ");
   }
@@ -767,6 +783,7 @@ function standardMetadataFromHistory(entry: { prompt?: unknown }) {
     lastImagePath,
     seed: seedFromGraph(graph, "RandomNoise", "noise_seed"),
     extraLoras: extraLorasFromGraph(graph),
+    attentionMethod: Object.values(graph).some((item) => item.class_type === "BlockSparseAttention" && item.inputs.selection === "sol-attn") ? "sol" as const : "sage" as const,
   };
 }
 
@@ -886,6 +903,7 @@ export async function createVideo(
     chainId,
     clipIndex,
     latentPath,
+    attentionMethod: options.attentionMethod ?? source?.attentionMethod ?? "sage",
     profile: source ? (referenceContinuation ? (source.profile === "low-vram" ? "low-vram" : source.profile === "fast" || source.profile === "cooled-fast" ? "fast" : source.profile === "cooled-turbo-4" ? "cooled-turbo-4" : "cooled-turbo-8") : "quality") : options.profile,
     resolution: source?.resolution ?? options.resolution,
     sound: source?.sound ?? options.sound,
@@ -943,6 +961,7 @@ export async function createVideo(
     seed: runOptions.seed,
     faceRefine: runOptions.faceRefine,
     extraLoras: runOptions.extraLoras,
+    attentionMethod: runOptions.attentionMethod,
     cooldownSeconds: Math.max(MIN_COOLDOWN_SECONDS, runOptions.cooldownSeconds ?? DEFAULT_COOLDOWN_SECONDS),
     generationSeconds: segment.generationSeconds ?? Math.max(1, Math.round((Date.now() - startedAt) / 1000)),
     chainId,

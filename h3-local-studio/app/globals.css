@@ -315,6 +315,8 @@ button { color: inherit; }
   .reference-card { grid-template-columns: 1fr; }
   .reference-image { min-height: 210px; border-right: 0; border-bottom: 1px dashed #343642; }
   .controls { display: grid; grid-template-columns: 1fr 1fr; width: 100%; }
+  .video-face-footer > .controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .controls .attention-control { grid-column: 1 / -1; }
   .controls select { width: 100%; max-width: none; }
   .setting-note { text-align: left; }
   .status-copy { display: grid; }
