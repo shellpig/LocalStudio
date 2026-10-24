@@ -4,6 +4,7 @@ Windows 本機版 MiniMax H3 影片製作介面。影片、Qwen 圖像、SeedVR2
 
 ## 功能
 
+- H3 主模型可選原版或 Singularity V2 pruned INT8；切換時自動配對加速 LoRA 與採樣器，保存至作品設定
 - 文字轉影片（T2VA）
 - 首尾圖轉影片（I2VA / FL2VA / L2VA）
 - H3 影片注意力可選 SageAttention（預設）或 sol-attn＋Comfy Kitchen；參考生影片暫維持 SageAttention
@@ -17,8 +18,9 @@ Windows 本機版 MiniMax H3 影片製作介面。影片、Qwen 圖像、SeedVR2
 - 影片換角：BFS 換頭（臉部＋髮型）或整個角色替換（4／6／8／20 步），另可選 Akatz V1.5 整個角色替換（20 步）；支援 480P／540P／原生 H3，沿用來源影片比例並合回原音軌
 - 人臉精修：作品可逐鏡頭預覽選臉，首尾圖／參考生影片可勾選生成後自動精修；支援原生 20 步、快速 8 步及多人逐組修復，保留原片並另存成品
 - 影片畫質提升：SeedVR2 3B INT8，另存 720p 作品，保留原比例、幀率與聲音
+- VOSR 1× 精修：從畫質提升頁或作品選單執行，維持原尺寸、幀率與幀數，另存成品並複製原片第一條音軌；逐幀進度、原始來源還原及獨立工作程序釋放
 - RTX 提升：NVIDIA VFX SDK 補幀 2～16 倍，或超解析 2／3／4 倍，另存新影片，保留時長與聲音
-- H3 影片、Qwen 圖片、RTX 提升與 Drama3 工作共用生成佇列，按下生成時保存設定，依序執行
+- H3 影片、Qwen 圖片、RTX 提升、VOSR 精修與 Drama3 工作共用生成佇列，按下生成時保存設定，依序執行
 - 額外 H3 LoRA：選單顯示用途、強度與觸發詞，支援社群常見權重命名及載入檢查
 - 作品列表、刪除、下載，並保存生成設定 metadata
 
@@ -29,6 +31,8 @@ Windows 本機版 MiniMax H3 影片製作介面。影片、Qwen 圖像、SeedVR2
 **這一節最重要。** 倉庫提供原始碼，不包含 ComfyUI、執行環境及模型。完整 H3 七個模型約 **54.2 GiB**；加上 Qwen、攝影機 LoRA 與 SeedVR2，模型合計約 **74.3 GiB**（約 80 GB），還需另外預留環境、下載快取、暫存影片與作品空間。
 
 上述大小使用 Qwen 原版；另加 Noct Q V4 與 REDQW21 V2 兩個可選主模型需約 **13.5 GiB**，三款都保留時模型合計約 **87.8 GiB**。
+
+基本模型合計亦不含 Singularity V2 與 VOSR：Singularity V2 主模型與專用加速 LoRA 另約 **21.35 GiB**；VOSR 完整可用 bundle 另約 **6.49 GiB**，DINOv2 的原始 `.pth` 下載／轉換另需約 **1.13 GiB** 暫存空間。
 
 以上合計**不含**可選的 BFS／ORB360／其他社群 LoRA、RTX 套件與 Drama3 獨立環境。Drama3 的 W4A8 主模型、codec 與 0.6B ASR 三項合計約 **25.8 GiB（27.7 GB）**，還需另留 Python 套件、快取與成品空間；RTX 不另下載上述 safetensors 模型，使用 NVIDIA 提供的套件。
 
@@ -56,6 +60,8 @@ Windows 本機版 MiniMax H3 影片製作介面。影片、Qwen 圖像、SeedVR2
 
 | 想使用的功能 | 步驟 7 需要下載的模型 | 另外需要 |
 |---|---|---|
+| Singularity V2 影片（可選） | H3 共用三項、Singularity V2 pruned INT8、LightX2V Ref2VA 4-step ComfyUI LoRA；QUALITY 另需 FP16 影片 VAE | 沿用既有 H3 節點，見下方 Singularity V2 說明 |
+| VOSR 1× 精修（可選） | VOSR2 DiT、配套 Qwen 2D VAE、DINOv2-L；不是 H3／Qwen 圖像頁既有 VAE | 步驟 15 的 VOSR 節點、FFmpeg；使用主專案 venv |
 | H3 文字／首尾圖影片（4步／6步／8步） | H3 共用三項、首尾圖模型、Turbo LoRA | 步驟 5 的 H3 節點 |
 | H3 QUALITY、一般影片動態延伸 | 上述模型，另加 FP16 影片 VAE | Motion Context 節點 |
 | H3 參考生影片（4步／6步／8步） | H3 共用三項、Ref2VA W4A8 模型、Turbo LoRA | LongMedia 節點；最多 9 張參考圖 |
@@ -237,6 +243,52 @@ New-Item -ItemType Directory -Force -Path .\ComfyUI\models\diffusion_models, .\C
 
 **來源差異：** Ref2VA 的 W4A8 mixed 模型來自 Kijai，不是 Comfy-Org 的 Ref2VA INT8 模型。本指南的 INT8 Video VAE 也使用 Kijai 的 2.95 GiB 版本；Comfy-Org 有同名但不同內容的檔案，請使用上表指定連結與下方 SHA256。
 
+### Singularity V2 pruned INT8（可選，2026-10-24 新增）
+
+來源：[Singularity 模型作者](https://huggingface.co/WarmBloodAban/Minimax-h3_Singularity)、[LightX2V 模型／加速設定](https://github.com/ModelTC/Minimax-H3-Turbo)。以下連結固定到 2026-10-24 核對的 revision，兩項合計約 **21.35 GiB**。保留大小寫與完整檔名；LoRA 必須使用表中的 **ComfyUI 轉換版**。
+
+| 本機檔名／直接下載 | 用途 | 放置目錄 | 大小 GiB |
+|---|---|---|---:|
+| [`Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors`](https://huggingface.co/WarmBloodAban/Minimax-h3_Singularity/resolve/1259cf16cd0b655ba691a32fb46a409142762972/Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors) | V2 pruned INT8 主模型，約 20.97 GB | `ComfyUI/models/diffusion_models/` | 19.53 |
+| [`minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors`](https://huggingface.co/lightx2v/Minimax-h3-Turbo/resolve/30f485ed874aa44c8183348ad361c5eabad318da/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors) | V2 快速方案自動搭配的加速 LoRA | `ComfyUI/models/loras/` | 1.82 |
+
+共用上方 H3 文字編碼器、影片 VAE 與聲音 VAE，不另下載一套。只做 Singularity 影片時不必為它載入原版主模型；原版生成、人臉精修與換角仍各自需要原有主模型。這個 V2 是 pruned INT8，不是約 34 GB 的完整 INT8，也不是 V1.3 W4A8。
+
+下載後重新啟動 ComfyUI、重新整理 Studio，在「H3 模型」選 Singularity V2。操作、採樣配對與已測範圍見下方「Singularity V2 模型切換」。
+
+### VOSR 2.0 1× 精修（可選，2026-10-24 新增）
+
+來源：[VOSR 上游](https://github.com/cswry/VOSR)、[ComfyUI-VOSR2 節點](https://github.com/ylchen333/ComfyUI-VOSR2)。以下五個檔案固定到 `CSWRY/VOSR` revision `f24b3061b7f350b81e1907bdcfc27f71fb4ff3f3`。三套權重必須成組使用，不能把既有 H3 VAE 或 Qwen 圖像頁的 VAE 換進來。
+
+| 下載檔名／直接下載 | 本機放置路徑（專案根目錄起算） | 大小 |
+|---|---|---:|
+| [`args.json`](https://huggingface.co/CSWRY/VOSR/resolve/f24b3061b7f350b81e1907bdcfc27f71fb4ff3f3/VOSR2/args.json) | `ComfyUI/models/vosr2/VOSR2/args.json` | 小型設定檔 |
+| [`ema_model.safetensors`](https://huggingface.co/CSWRY/VOSR/resolve/f24b3061b7f350b81e1907bdcfc27f71fb4ff3f3/VOSR2/checkpoints/ema_model.safetensors) | `ComfyUI/models/vosr2/VOSR2/checkpoints/ema_model.safetensors` | 5.19 GiB |
+| [`config.json`](https://huggingface.co/CSWRY/VOSR/resolve/f24b3061b7f350b81e1907bdcfc27f71fb4ff3f3/Qwen-Image-vae-2d/config.json) | `ComfyUI/models/vosr2/VOSR2/Qwen-Image-vae-2d/config.json` | 小型設定檔 |
+| [`diffusion_pytorch_model.safetensors`](https://huggingface.co/CSWRY/VOSR/resolve/f24b3061b7f350b81e1907bdcfc27f71fb4ff3f3/Qwen-Image-vae-2d/diffusion_pytorch_model.safetensors) | `ComfyUI/models/vosr2/VOSR2/Qwen-Image-vae-2d/diffusion_pytorch_model.safetensors` | 0.17 GiB |
+| [`dinov2_vitl14_pretrain.pth`](https://huggingface.co/CSWRY/VOSR/resolve/f24b3061b7f350b81e1907bdcfc27f71fb4ff3f3/torch_cache/checkpoints/dinov2_vitl14_pretrain.pth) | 先存為 `ComfyUI/models/vosr2/VOSR2/dinov2_vitl14_pretrain.pth`，再依下方轉換 | 1.13 GiB |
+
+下載前建立目錄：
+
+```powershell
+New-Item -ItemType Directory -Force -Path .\ComfyUI\models\vosr2\VOSR2\checkpoints, .\ComfyUI\models\vosr2\VOSR2\Qwen-Image-vae-2d | Out-Null
+```
+
+DINOv2 上游是 `.pth`；Studio 檢查的是轉換後的 `dinov2_vitl14.safetensors`。下載並核對 SHA256 後，在專案根目錄執行：
+
+```powershell
+@'
+from pathlib import Path
+import torch
+from safetensors.torch import save_file
+bundle = Path("ComfyUI/models/vosr2/VOSR2")
+state = torch.load(bundle / "dinov2_vitl14_pretrain.pth", map_location="cpu", weights_only=True, mmap=True)
+save_file({key: value.contiguous() for key, value in state.items()}, str(bundle / "dinov2_vitl14.safetensors"))
+'@ | .\.venv\Scripts\python.exe -
+```
+
+完整可用 bundle 約 **6.49 GiB**；保留原始 `.pth` 時另外占約 1.13 GiB。還需依步驟 15 安裝節點並重啟主 ComfyUI。**Studio 不會自動下載缺少的模型**，`/h3-studio/vosr/status` 必須回傳 `ready: true`；上游 ComfyUI 模型載入節點的自動下載功能與 Studio 的預檢不同。
+
 ### Qwen 圖像編輯（可選）
 
 原版三項合計約 16.1 GiB。文字生圖、一般圖像編輯與攝影機視角需要一個圖像主模型、文字編碼器及 VAE；選用下方的微調模型時，只替換圖像主模型，文字編碼器及 VAE 沿用。
@@ -374,6 +426,11 @@ Get-FileHash ".\ComfyUI\models\loras\qwen_image_2.1_multiple_angles_v2_step1500.
 
 | 本機檔名 | SHA256 |
 |---|---|
+| `Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors` | `d7637c2c35cd30facd9e93778c491f6d82f91c4a441aecbdb4c384a62a5f3d9f` |
+| `minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors` | `5b9ab5ade15d0775676d01a907268a69a1468dc6033b3b0d3ded5502f3ebb84c` |
+| VOSR2 `ema_model.safetensors` | `bdcaa81e4c675b6074de643e27daafe73eb8125d4d0264d1bf30a004e9644b71` |
+| VOSR2 `Qwen-Image-vae-2d/diffusion_pytorch_model.safetensors` | `1dd2c67f3f29734d48709513ed181d4f351966d76ba95f77a5cff8e1daf547fa` |
+| VOSR2 原始 `dinov2_vitl14_pretrain.pth` | `d5383ea8f4877b2472eb973e0fd72d557c7da5d3611bd527ceeb1d7162cbf428` |
 | `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` | `35a88d51044231fe332301d7a62aa81e3f2cba62febeb446e2c1e3e0ef76f2c6` |
 | `minimax_h3_video_vae_int8_convrot.safetensors` | `9bb2d96f218c76babd85e0611b85ca8fb330a90546c01a0005e8a58a59593410` |
 | `minimax_h3_audio_vae_fp32.safetensors` | `8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48` |
@@ -644,6 +701,26 @@ Invoke-RestMethod 'http://127.0.0.1:8188/h3-studio/face/status?mode=turbo-8&sele
 
 ---
 
+## 步驟 15：VOSR 精修節點（可選）
+
+VOSR 使用主專案 `.venv`；工作執行時啟動獨立 Python 程序，完成或中斷後退出，不另建立一套 ComfyUI。從專案根目錄安裝本機已驗證版本：
+
+```powershell
+git clone https://github.com/ylchen333/ComfyUI-VOSR2.git ComfyUI/custom_nodes/ComfyUI-VOSR2
+git -C ComfyUI/custom_nodes/ComfyUI-VOSR2 checkout 6a21810b3f4f1a0ffc477c55330db0ac03c671f0
+.\.venv\Scripts\python.exe -m pip install -r ComfyUI/custom_nodes/ComfyUI-VOSR2/requirements.txt
+```
+
+若資料夾已存在，先核對現有版本，不要重複 clone。節點使用現有 PyTorch、einops、safetensors 與 huggingface_hub；本機接入時沒有升級 PyTorch。依步驟 7 放齊五個下載檔及轉換後的 DINOv2 safetensors，確認 FFmpeg／FFprobe 可執行，再重啟主 ComfyUI 並重新整理 Studio：
+
+```powershell
+Invoke-RestMethod 'http://127.0.0.1:8188/h3-studio/vosr/status'
+```
+
+應為 `ready: true`、`missing: []`；缺檔會列出路徑。這是安裝預檢，仍須以短片測試輸出與畫面效果。使用方式見下方「VOSR 1× 精修」。
+
+---
+
 # 啟動與停止
 
 啟動（會一併帶起 ComfyUI 與介面，並開啟瀏覽器）：
@@ -736,7 +813,7 @@ Invoke-RestMethod 'http://127.0.0.1:8188/h3-studio/outputs'
 
 # 生成佇列與模式
 
-H3 影片（含 BFS 換角）、Qwen 圖片、RTX 提升與 Drama3 工作共用佇列：可編輯時按「加入佇列」會保存當下設定，等待任務可移除；失敗保留錯誤並繼續下一筆。Qwen 多張生成是一整筆任務，H3 會等必要轉檔、合併與設定保存流程結束後才接下一筆；Drama3 的生成、聲線試聽、辨識與保存聲線都會排隊，執行時鎖定其設定，關閉服務也屬於該筆工作。完成後留在目前頁面，作品可到「作品」頁查看。
+H3 影片（含 BFS 換角）、Qwen 圖片、RTX 提升、VOSR 精修與 Drama3 工作共用佇列：可編輯時按「加入佇列」會保存當下設定，等待任務可移除；失敗保留錯誤並繼續下一筆。Qwen 多張生成是一整筆任務，H3 會等必要轉檔、合併與設定保存流程結束後才接下一筆；Drama3 的生成、聲線試聽、辨識與保存聲線都會排隊，執行時鎖定其設定，關閉服務也屬於該筆工作。完成後留在目前頁面，作品可到「作品」頁查看。
 
 **佇列保存在目前瀏覽器頁面，不會持久保存。** 重新整理或關閉網頁會失去尚未執行的等待任務；已送到 ComfyUI 的 GPU 工作可能繼續，但瀏覽器負責的後處理／metadata 保存可能中斷。請等整筆完成再關閉頁面。ComfyUI 重啟也不提供任務續跑保證。
 
@@ -746,11 +823,33 @@ H3 影片（含 BFS 換角）、Qwen 圖片、RTX 提升與 Drama3 工作共用�
 
 | H3 模式 | 目前行為 |
 |---|---|
-| 4步／6步／8步 | 相同 Turbo 模型與採樣方式，差別是步數；每步都依介面秒數降溫，包含最後一步 |
+| 原版 H3 4步／6步／8步 | 相同 Turbo 模型與採樣方式，差別是步數；每步都依介面秒數降溫，包含最後一步 |
 | QUALITY | 原生 20 步、FP16 影片 VAE，每步降溫 |
 | 安全長片 | Turbo 6 步、LoRA merge、低解析生成與分塊解碼，再以 CPU 放大成 480P；不支援 H3 動態延伸 |
 
 參考生影片提供 4步／6步／8步，使用 Ref2VA W4A8／LongMedia 流程。COOLED FAST 與低顯存已從新任務選單移除，但仍保留舊作品設定的讀取相容性。H3 降溫預設 15 秒、最低 5 秒；Qwen 預設 0 秒，可自行增加，且跳過最後一步後的暫停。
+
+## Singularity V2 模型切換
+
+在「文生影片」「首尾圖生影片」「參考生影片」的設定中，選擇「H3 模型 → Singularity V2 · INT8」。切換時預設為 **4步 · 作者推薦**，不是額外疊加一個風格 LoRA。
+
+| 項目 | 原版 H3 | Singularity V2 |
+|---|---|---|
+| 文字／首尾圖主模型 | 原版 FL2VA pruned INT8 | Singularity V2 pruned INT8 |
+| 參考生影片主模型 | 原版 Ref2VA W4A8 mixed | 同一個 Singularity V2 pruned INT8 |
+| 快速方案的加速 | Larry Turbo v4＋既有 Turbo 採樣器 | LightX2V Ref2VA 4-step ComfyUI LoRA，強度 1＋標準 Euler |
+| V2 的排程偏移 | — | video 12／audio 3，`simple`；保留每步冷卻 |
+| QUALITY | 原生 20 步，不加 Turbo | 文字／首尾圖介面可選原生 20 步，不加 Turbo；V2 此方案尚未實跑 |
+
+V2 的 **6步／8步標為實驗設定**：作者推薦的是四步蒸餾版本，增加步數不保證品質更好。自動加速 LoRA 不列入「額外 LoRA」選單，避免重複套用；也不會同時疊加 Larry 與 LightX2V。V2 不提供安全長片與舊低顯存方案。
+
+參考模式可同時上傳選填首圖、尾圖與最多九張參考圖；首尾圖由 `AddGuide` 約束開頭／結尾，其他參考圖保留原有標籤用途。參考影片仍使用 LongMedia＋SageAttention，尚未開放 sol-attn。
+
+模型選擇會隨加入佇列時保存至 `h3Model`，作品顯示所用模型，「再做一次」還原原選擇，延伸沿用來源模型；舊作品缺少欄位時依原版處理。延伸接線與資料還原有測試，但 V2 的實際影片延伸尚未完成生成驗證。
+
+人臉精修與換角仍使用各自的原版 Ref2VA W4A8 模型；H3 單幀生圖、Qwen、SeedVR2 與 RTX 也不跟著這個影片模型選單切換。**V2 生成後自動修臉的完整組合尚未實跑**，不能把既有修臉測試當作此組合已通過。
+
+2026-10-24 本機已實跑 V2 文生影片 4／6／8 步、首尾圖 4 步，以及參考圖＋首尾圖 4 步；範圍為 608×352、約五秒、有聲短片。32 GB RAM 下已觀察到明顯記憶體壓力，不代表高解析度、多參考或長片同樣可用。詳見後方效能紀錄。
 
 ## 影片注意力選擇
 
@@ -862,6 +961,23 @@ BFS 來源影片透過 **Add Guide** 提供對齊的影片引導；Akatz V1.5 �
 - 模型就緒、單元測試或介面測試成功不等於生成品質已驗證。原生／快速、單人／多人、說話鏡頭、不同尺寸與人物交錯應分別驗收，不宣稱全部組合已完成實測。
 
 ---
+
+# VOSR 1× 精修
+
+這是**生成後的手動畫質處理**，對整段影片逐幀修復細節，不放大、不補幀，也不負責指定人物身份或追蹤人臉。與「人臉精修」及 SeedVR2 720p 提升是不同功能。
+
+1. 選「影片畫質提升 → 畫質處理方式 → VOSR · 1× 精修（維持原尺寸）」。可上傳 MP4／MOV／WebM（上限 1 GB），或選已有作品；作品的「影片操作 → VOSR 精修」也能直接帶入。
+2. 來源準備完成後，按「加入 VOSR 精修佇列」。工作與 H3／Qwen／RTX／Drama3 等依同一個 Studio 佇列順序執行；切換來源不改變已加入的那一筆。
+3. 狀態會顯示載入、已處理幀數／總幀數與輸出驗證。完成後另存新作品，標示 VOSR 1×、來源、尺寸、幀率及耗時，原片保留。
+4. VOSR 成品按「再做一次」會還原**當時的原始來源**；若要對該成品再精修一輪，請選「VOSR 精修」。重新載入設定不會自動開始 GPU 工作。
+
+固定使用 BF16 DiT／視覺編碼器、FP32 VAE、wavelet 校色；DiT 與 VAE tile size 均為 512、overlap 64，每幀固定種子 42。這是本機已實跑的一組設定，介面第一版不開放倍率、強度或其他參數。模型在短生命週期的獨立程序內執行，前一筆模型先卸載，工作完成或被中斷後結束程序並清理暫存影片；不把未完成輸出列入作品。
+
+成品維持來源的尺寸、固定幀率與幀數；有聲來源直接複製第一條音軌並比對音軌雜湊，無聲來源維持無聲。第一版支援**偶數寬高、一般方形像素、無旋轉標記的 8-bit SDR 固定幀率影片**；可變幀率、HDR／高位元或需旋轉／像素比例正規化的來源會回報不支援，請先轉換來源。VOSR 不沿用 SeedVR2 的 720p／15 秒片段設定。
+
+目前未加入「生成後自動 VOSR」或「修臉後自動 VOSR」。更清楚的細節可能包含模型重新描繪，且不保證跨幀無閃爍；建議先用短片比較。2026-10-24 的約五秒樣本已驗證尺寸、124 幀、24 fps、音軌一致，以及中途停止後原片保留、無成品與暫存影片；尚未驗證所有長度、解析度、來源格式或修臉串接組合。
+
+來源快取位於 `ComfyUI/input/h3_rtx/<sourceId>/`（沿用既有影片匯入）；成品為 `ComfyUI/output/video/H3_Studio_VOSR_1x_*.mp4`，旁邊 `.mp4.h3.json` 保存 `vosrSourceId`、來源檔名與處理資訊。刪除來源快取後，「再做一次」需重新選取或上傳原片。
 
 # RTX 提升
 
@@ -999,6 +1115,7 @@ MinimaxH3/                          ← Git 倉庫根目錄
 │  ├─ lib/drama3.ts                 ← 本機多人配音 API
 │  ├─ lib/rtx.ts                    ← RTX 提升 API 與佇列工作
 │  ├─ lib/enhance.ts                ← SeedVR2 工作流與畫質混合
+│  ├─ lib/vosr.ts                   ← VOSR 來源還原、佇列提交與進度
 │  ├─ lib/generation-queue.ts       ← 瀏覽器內共用佇列
 │  └─ tests/
 ├─ integrations/
@@ -1009,6 +1126,8 @@ MinimaxH3/                          ← Git 倉庫根目錄
 │     ├─ h3_studio_tts.py           ← Gemini TTS 請求、驗證與試聽快取
 │     ├─ h3_studio_drama3.py        ← Drama3 工作、結果匯入與服務啟停
 │     ├─ h3_studio_rtx.py           ← NVIDIA RTX 補幀／超解析
+│     ├─ h3_studio_vosr.py          ← VOSR 工作節點、來源與進度 API
+│     ├─ h3_studio_vosr_worker.py   ← 獨立程序逐幀精修、編碼與驗證
 │     ├─ h3_studio_lora.py          ← 社群 H3 LoRA 載入檢查
 │     ├─ h3_studio_enhance.py       ← 影片準備、混合與畫質提升 API
 │     ├─ h3_cooled_turbo_sampler.py ← 兩個降溫用採樣節點
@@ -1098,7 +1217,30 @@ RTX 4080 Laptop 12 GB、系統 RAM 32 GB、W4A8 主模型、experts in RAM、2 G
 
 ---
 
+### 2026-10-24：Singularity V2 與 VOSR 實測
+
+硬體為 RTX 4080 Laptop 12 GB、32 GB RAM，使用專案既有環境。下列是單次已完成的短片結果，不是不同 GPU 或冷暖狀態可直接套用的速度保證。
+
+| V2 生成測試 | 尺寸／原生輸出幀數 | 完整耗時 |
+|---|---|---:|
+| 文生 4 步 | 608×352／124 幀 | 171 秒 |
+| 文生 6 步 | 608×352／124 幀 | 183 秒 |
+| 文生 8 步 | 608×352／124 幀 | 237 秒 |
+| 首尾圖 4 步 | 608×352／124 幀 | 158 秒 |
+| 參考圖＋首尾圖 4 步 | 608×352／120 幀 | 156 秒 |
+
+以上均含音軌並完成整段解碼；每步冷卻 15 秒，第一筆另有冷啟動成本，因此不能直接用總耗時算採樣加速比。首尾圖測試使用相同測試圖作兩端約束，沒有涵蓋不同構圖的首尾轉換。抽幀未見明顯人物崩壞，但沒有證明 6／8 步必然優於 4 步。
+
+VOSR 使用 V2 四步影片作來源，1× 處理 608×352、124 幀、24 fps。獨立試驗約 **58 秒**（不含首次下載與模型載入）；Studio 的完整工作約 **87 秒**，含獨立程序啟動、載入、處理及驗證。兩者均維持尺寸、幀率與幀數，原音軌資料雜湊一致；Studio 版本另外通過中斷清理、作品顯示、來源還原與 Chromium 桌機／手機介面驗收。
+
+人臉輪廓、眼鼻與髮絲在放大比較中較清楚，但有重新描繪。相同來源光流做動作補償後，平均跨幀像素差異由約 1.21 增至 1.47（8-bit 尺度，約 +22%）；數值同時包含細節增強、光流誤差與可能的閃爍，**不是閃爍程度增加 22% 的結論，也不能據此宣稱無閃爍**。
+
 # 疑難排解
+
+### VOSR 顯示尚未就緒或再做一次找不到來源
+
+先查看 `http://127.0.0.1:8188/h3-studio/vosr/status`。404 通常表示主 ComfyUI 尚未重啟或 Studio 節點未載入；`ready: false` 時依 `missing` 路徑補齊節點／模型，尤其確認 DINOv2 已轉成 safetensors。只重新整理網頁不會重新載入 Python 節點。若已刪除 `ComfyUI/input/h3_rtx/` 的來源快取，重新選取原片；不要把成品誤當成原始來源重跑。
+
 
 **作品列表空白、優化按鈕失敗、生成找不到節點**
 junction 沒建好。回到步驟 6，並確認 ComfyUI 主控台有 `ComfyUI-H3-Studio` 的載入紀錄。
@@ -1165,6 +1307,18 @@ Gemini API 回 HTTP 429。等一段時間再試，或到 Google AI Studio 檢查
 ```powershell
 cd h3-local-studio; npm test
 ```
+
+Singularity／VOSR 新增驗證（均從專案根目錄執行，下列不提交 GPU 工作）：
+
+```powershell
+node --test h3-local-studio/tests/singularity.test.mjs h3-local-studio/tests/vosr.test.mjs
+.\.venv\Scripts\python.exe tools/test_vosr_studio.py
+.\.venv\Scripts\python.exe tools/test_h3_reference_anchors.py
+```
+
+`tools/test_vosr_studio_ui.mjs` 使用專用 headless Chromium 並攔截 API，檢查選擇方法、作品入口、佇列／進度、成品、原始來源還原與手機／桌機版面；不呼叫 GPU。`tools/test_h3_singularity.mjs` 與 `tools/test_vosr_video.py` 則會實際生成／處理影片，後者固定使用本機測試來源，不能當成無副作用的單元測試。
+
+2026-10-24 完整 `npm test` 為 61 項、58 通過、3 項既有字串斷言失敗（Motion Context、裁切、沿用種子），已在修改前重現；新增測試通過。完整 TypeScript 檢查另有既有 Cloudflare 型別缺失，不能把正式建置成功視為型別檢查全綠。
 
 Drama3 後端測試（在專案根目錄，用主專案 venv；模擬服務，不執行大模型）：
 

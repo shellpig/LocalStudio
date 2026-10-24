@@ -44,6 +44,12 @@ class Request:
 
 
 class ReferenceAnchorTests(unittest.IsolatedAsyncioTestCase):
+    def test_h3_model_metadata_keeps_selection_and_legacy_absence(self):
+        for model in ("original", "singularity-v2"):
+            self.assertEqual(namespace["validated_metadata"]({"h3Model": model})["h3Model"], model)
+        for data in ({}, {"h3Model": "unknown"}):
+            self.assertNotIn("h3Model", namespace["validated_metadata"](data))
+
     def test_attention_metadata_keeps_supported_methods_and_legacy_absence(self):
         for method in ("sage", "sol"):
             self.assertEqual(namespace["validated_metadata"]({"attentionMethod": method})["attentionMethod"], method)

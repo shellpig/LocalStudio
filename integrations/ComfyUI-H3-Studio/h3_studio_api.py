@@ -152,6 +152,8 @@ def validated_metadata(data):
 
     if data.get("profile") in {"fast", "cooled-fast", "cooled-turbo-4", "cooled-turbo-8", "quality", "safe-long", "low-vram"}:
         metadata["profile"] = data["profile"]
+    if data.get("h3Model") in {"original", "singularity-v2"}:
+        metadata["h3Model"] = data["h3Model"]
     if data.get("attentionMethod") in {"sage", "sol"}:
         metadata["attentionMethod"] = data["attentionMethod"]
     if data.get("resolution") in {"safe", "clear", "p480", "p540", "native"}:

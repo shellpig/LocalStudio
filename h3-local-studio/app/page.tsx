@@ -10,6 +10,7 @@ import {
   GeneratedVideo,
   GenerationOptions,
   H3AttentionMethod,
+  H3Model,
   ExtraLora,
   getAvailableLoras,
   getRecentVideos,
@@ -125,10 +126,12 @@ export default function Home() {
   const [faceEnabled, setFaceEnabled] = useState(false);
   const [faceSettings, setFaceSettings] = useState<FaceRefineOptions>(DEFAULT_FACE_REFINE);
   const [activeFaceControl, setActiveFaceControl] = useState<FaceControl | null>(null);
+  const [vosrWork, setVOSRWork] = useState<{ video: GeneratedVideo; redo: boolean; key: number } | null>(null);
   const [enhancementBusy, setEnhancementBusy] = useState(false);
   const [connected, setConnected] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [profile, setProfile] = useState<GenerationOptions["profile"]>("fast");
+  const [h3Model, setH3Model] = useState<H3Model>("original");
   const [attentionMethod, setAttentionMethod] = useState<H3AttentionMethod>("sage");
   const [resolution, setResolution] = useState<GenerationOptions["resolution"]>("safe");
   const [duration, setDuration] = useState(5);
@@ -537,7 +540,7 @@ export default function Home() {
             referenceDefinitions,
           )
         : prompt.trim(),
-      profile, resolution, duration, aspect, sound: soundEnabled, sourceMode,
+      profile, resolution, duration, aspect, sound: soundEnabled, sourceMode, h3Model,
       attentionMethod: sourceMode === "reference" ? "sage" : attentionMethod,
       cooldownSeconds: Math.max(MIN_COOLDOWN_SECONDS, cooldownSeconds),
       seed: seed.trim() ? Number(seed) : undefined,
@@ -826,6 +829,7 @@ export default function Home() {
   }
 
   async function redoVideo(video: GeneratedVideo) {
+    if (video.vosrRefined) { openVOSR(video, true); return; }
     if (video.faceRefined) { setFaceWork(video); return; }
     setFaceEnabled(Boolean(video.faceRefine));
     setFaceSettings(video.faceRefine ?? DEFAULT_FACE_REFINE);
@@ -916,6 +920,7 @@ export default function Home() {
     setPromptBeforeOptimization(null);
     setOptimizedPromptMode(null);
     setProfile(video.profile === "cooled-fast" ? "fast" : video.profile);
+    setH3Model(video.h3Model ?? "original");
     setAttentionMethod(video.attentionMethod ?? "sage");
     setResolution(video.resolution);
     setDuration(nextDuration);
@@ -941,10 +946,17 @@ export default function Home() {
     window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
   }
 
+  function openVOSR(video: GeneratedVideo, redo = false) {
+    setContinuationSource(null); setRTXMode(false); setSwapMode(false); setEnhancementMode(true);
+    setVOSRWork({ video, redo, key: Date.now() }); setView("create");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   function extendVideo(video: GeneratedVideo) {
     if (!video.extendable || !video.profile || !video.resolution || video.sound === undefined || !video.width || !video.height) return;
     setRTXMode(false); setEnhancementMode(false); setSwapMode(false);
     setContinuationSource(video);
+    setH3Model(video.h3Model ?? "original");
     setAttentionMethod(video.attentionMethod ?? "sage");
     setSourceMode(video.inputMode === "reference" ? "reference" : "text");
     setProfile(video.inputMode === "reference" ? video.profile === "cooled-fast" ? "fast" : video.profile : "quality");
@@ -1008,7 +1020,7 @@ export default function Home() {
     setOptimizedPromptMode(null);
     if (nextMode !== "text" && !continuationSource && extraLoras.some((item) => item.name === ORB360_LORA) && !prompt.trim() && !isOptimizing) applyOrb360Prompt(nextMode);
     if (nextMode === "reference") {
-      setProfile("cooled-turbo-8");
+      setProfile(h3Model === "singularity-v2" ? "cooled-turbo-4" : "cooled-turbo-8");
       setResolution("native");
       setAspect("16:9");
     } else {
@@ -1094,7 +1106,7 @@ export default function Home() {
         </div>
         {view === "create" ? (
           <>
-            {enhancementMode ? <EnhanceStudio videos={videoWorks} connected={connected} disabled={isGeneratingH3Image} executionDisabled={queueBusy} onBusyChange={setEnhancementBusy} onComplete={() => void refreshHistory()} /> : swapMode || rtxMode ? null : <>
+            {enhancementMode ? <EnhanceStudio key={vosrWork?.key ?? "enhance"} initialWork={vosrWork?.video} redo={vosrWork?.redo} enqueue={generationQueue.add} videos={videoWorks} connected={connected} disabled={isGeneratingH3Image} executionDisabled={queueBusy} onBusyChange={setEnhancementBusy} onComplete={() => void refreshHistory()} /> : swapMode || rtxMode ? null : <>
             <section className="composer" aria-label="影片生成設定">
               {continuationSource && (
                 <div className="continuation-banner">
@@ -1324,7 +1336,7 @@ export default function Home() {
                   )}
                   {extraLoras.length > 0 && (
                     <p className="lora-stack-note">
-                      疊加時所有 LoRA 會改用 merge 模式，否則後面的會蓋掉前面的。畫面會比單一 LoRA 稍軟。
+                      {h3Model === "singularity-v2" ? "疊加 LoRA 可能改變人物、動作與風格，建議逐一測試。" : "疊加時所有 LoRA 會改用 merge 模式，否則後面的會蓋掉前面的。畫面會比單一 LoRA 稍軟。"}
                     </p>
                   )}
                 </div>
@@ -1333,22 +1345,29 @@ export default function Home() {
               <div className={`composer-footer${sourceMode !== "text" && !continuationSource ? " video-face-footer" : ""}`}>
                 <div className="controls">
                   <label>
+                    <span>H3 模型</span>
+                    <select value={h3Model} onChange={(event) => { setH3Model(event.target.value as H3Model); setProfile(event.target.value === "singularity-v2" ? "cooled-turbo-4" : "fast"); }} disabled={Boolean(continuationSource)}>
+                      <option value="original">原版 H3</option>
+                      <option value="singularity-v2">Singularity V2 · INT8</option>
+                    </select>
+                  </label>
+                  <label>
                     <span>模式</span>
                     <select value={profile} onChange={(event) => chooseProfile(event.target.value as GenerationOptions["profile"])} disabled={Boolean(continuationSource)}>
                       {profile === "low-vram" && <option value="low-vram" hidden disabled>舊設定 · {sourceMode === "reference" ? 8 : 6}步（merge）</option>}
                       {sourceMode === "reference" ? (
                         <>
-                          <option value="cooled-turbo-4">4步</option>
-                          <option value="fast">6步</option>
-                          <option value="cooled-turbo-8">8步</option>
+                          <option value="cooled-turbo-4">{h3Model === "singularity-v2" ? "4步 · 作者推薦" : "4步"}</option>
+                          <option value="fast">{h3Model === "singularity-v2" ? "6步 · 實驗" : "6步"}</option>
+                          <option value="cooled-turbo-8">{h3Model === "singularity-v2" ? "8步 · 實驗" : "8步"}</option>
                         </>
                       ) : (
                         <>
-                          <option value="cooled-turbo-4">4步</option>
-                          <option value="fast">6步</option>
-                          <option value="cooled-turbo-8">8步</option>
+                          <option value="cooled-turbo-4">{h3Model === "singularity-v2" ? "4步 · 作者推薦" : "4步"}</option>
+                          <option value="fast">{h3Model === "singularity-v2" ? "6步 · 實驗" : "6步"}</option>
+                          <option value="cooled-turbo-8">{h3Model === "singularity-v2" ? "8步 · 實驗" : "8步"}</option>
                           <option value="quality">QUALITY · 原生 20 步</option>
-                          <option value="safe-long">安全長片 · 低解析生成／480P 輸出</option>
+                          {h3Model === "original" && <option value="safe-long">安全長片 · 低解析生成／480P 輸出</option>}
                         </>
                       )}
                     </select>
@@ -1480,6 +1499,7 @@ export default function Home() {
                 )}
                 {sourceMode === "reference" && <span> · Ref2VA W4A8 · {continuationSource?.inputMode === "reference" ? continuationSource.referenceFiles?.length ?? 0 : referenceImages.filter((reference) => reference.file).length} 張參考圖 · Turbo {referenceVideoSteps(profile)} 步</span>}
                 <span> · 每步降溫 {cooldownSeconds} 秒 ×{cooldownSteps} 步 ≈ {cooldownSeconds * cooldownSteps} 秒冷卻</span>
+                {h3Model === "singularity-v2" && <span> · {profile === "quality" ? "原生取樣，不使用加速 LoRA" : "自動搭配 LightX2V Ref2VA Turbo 4-step；6／8 步為實驗設定"}</span>}
                 {sourceMode === "reference" ? <span> · 參考生影片使用 SageAttention，sol-attn 尚不相容 LongMedia 記憶體分塊</span> : attentionMethod === "sol" && <span> · sol-attn 稀疏注意力：速度與畫面會隨片長、解析度而變化，短序列會使用一般注意力</span>}
                 {profile === "safe-long" && <span> · 安全長片會低解析生成，再以 CPU 放大為 480P；畫面較柔且不支援延伸</span>}
                 {profile === "low-vram" && <span> · Turbo LoRA 改用 merge 模式，省下採樣時最大的一筆顯存配置；長片較不易爆顯存，畫面略柔</span>}
@@ -1502,7 +1522,7 @@ export default function Home() {
             )}
 
             </>}
-            {!enhancementBusy && <RecentSection videos={videoWorks.slice(0, 3)} onViewAll={() => setView("works")} onDelete={removeVideo} onExtend={extendVideo} onRedo={redoVideo} onRefine={setFaceWork} onReuseSeed={reuseSeed} emptyText="第一支影片，從一句話開始" />}
+            {!enhancementBusy && <RecentSection videos={videoWorks.slice(0, 3)} onViewAll={() => setView("works")} onDelete={removeVideo} onExtend={extendVideo} onRedo={redoVideo} onRefine={setFaceWork} onVOSR={openVOSR} onReuseSeed={reuseSeed} emptyText="第一支影片，從一句話開始" />}
           </>
         ) : view === "edit" ? (
           <>
@@ -1783,7 +1803,7 @@ export default function Home() {
               ? <ImageGrid videos={imageWorks} onDelete={removeVideo} onRedo={redoImage} onReuseSeed={reuseSeed} emptyText="目前還沒有本次工作階段的圖片" />
               : worksTab === "audio"
                 ? <AudioGrid audios={audioWorks} onDelete={removeVideo} onRedo={(audio) => { setDramaWork(audio); setView("tts"); }} />
-              : <VideoGrid videos={videoWorks} onDelete={removeVideo} onExtend={extendVideo} onRedo={redoVideo} onRefine={setFaceWork} onReuseSeed={reuseSeed} emptyText="目前還沒有本次工作階段的作品" />}
+              : <VideoGrid videos={videoWorks} onDelete={removeVideo} onExtend={extendVideo} onRedo={redoVideo} onRefine={setFaceWork} onVOSR={openVOSR} onReuseSeed={reuseSeed} emptyText="目前還沒有本次工作階段的作品" />}
           </section>
         ) : <SpeechStudio key={dramaWork?.filename ?? "speech"} enqueue={generationQueue.add} disabled={enhancementBusy || isGeneratingH3Image} initialSettings={dramaWork?.drama3} onGenerated={(audio) => {
           setVideos((current) => [audio, ...current.filter((item) => item.filename !== audio.filename || item.subfolder !== audio.subfolder)]);
@@ -1932,19 +1952,20 @@ type VideoGridActions = {
   onExtend: (video: GeneratedVideo) => void;
   onRedo: (video: GeneratedVideo) => Promise<void>;
   onRefine: (video: GeneratedVideo) => void;
+  onVOSR: (video: GeneratedVideo) => void;
   emptyText: string;
 };
 
-function RecentSection({ videos, onViewAll, onDelete, onExtend, onRedo, onRefine, onReuseSeed, emptyText }: VideoGridActions & { onViewAll: () => void }) {
+function RecentSection({ videos, onViewAll, onDelete, onExtend, onRedo, onRefine, onVOSR, onReuseSeed, emptyText }: VideoGridActions & { onViewAll: () => void }) {
   return (
     <section className="recent-section">
       <div className="section-heading"><div><p className="eyebrow">LOCAL CREATIONS</p><h2>最近作品</h2></div><button onClick={onViewAll}>查看全部 →</button></div>
-      <VideoGrid videos={videos} onDelete={onDelete} onExtend={onExtend} onRedo={onRedo} onRefine={onRefine} onReuseSeed={onReuseSeed} emptyText={emptyText} />
+      <VideoGrid videos={videos} onDelete={onDelete} onExtend={onExtend} onRedo={onRedo} onRefine={onRefine} onVOSR={onVOSR} onReuseSeed={onReuseSeed} emptyText={emptyText} />
     </section>
   );
 }
 
-function VideoGrid({ videos, onDelete, onExtend, onRedo, onRefine, onReuseSeed, emptyText }: VideoGridActions) {
+function VideoGrid({ videos, onDelete, onExtend, onRedo, onRefine, onVOSR, onReuseSeed, emptyText }: VideoGridActions) {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [loadingRedo, setLoadingRedo] = useState<string | null>(null);
@@ -1993,10 +2014,12 @@ function VideoGrid({ videos, onDelete, onExtend, onRedo, onRefine, onReuseSeed, 
               <div className="video-meta">
                 <span title={video.filename}>{video.filename}</span>
                 {video.faceRefined && <small title={`來源：${video.faceRefineSource?.filename}`}>人臉精修{video.faceRefinePeopleTotal ? ` · 逐人修復 ${video.faceRefinePeopleCompleted}/${video.faceRefinePeopleTotal} 組` : ""} · {video.faceRefineSteps ?? 20} 步{video.faceRefine?.mode === "turbo-8" ? " · 無音訊約束" : ""} · 強度 {video.faceRefine?.strength}</small>}
+                {video.vosrRefined && <small title={`來源：${video.vosrSourceName}`}>VOSR 1× 精修 · {video.width} × {video.height} · {video.fps} fps</small>}
                 {video.enhanced && <small title={`來源：${video.enhancementSource}`}>畫質提升 · 720p · {video.enhancementStrength}%</small>}
                 {video.rtxOperation && <small title={`來源：${video.rtxSource}`}>RTX {video.rtxOperation === "fps" ? "補幀" : "超解析"} · {video.rtxMultiplier} 倍 · {video.width} × {video.height} · {video.fps} fps</small>}
                 {video.swapMode && <small title={`來源：${video.swapSource}`}>{SWAP_LABELS[video.swapMode]} · {video.steps} 步 · {video.swapCompletedSegments}／{video.swapTotalSegments} 段</small>}
                 {video.generationSeconds !== undefined && <small>耗時 {video.generationSeconds} 秒</small>}
+                {video.h3Model && <small>H3 模型 · {video.h3Model === "singularity-v2" ? "Singularity V2 · INT8" : "原版 H3"}</small>}
                 {video.attentionMethod && <small>注意力 · {video.attentionMethod === "sol" ? "sol-attn + Comfy Kitchen" : "SageAttention"}</small>}
                 {video.extraLoras?.length ? (
                   <small title={video.extraLoras.map((l) => `${l.name} @${l.strength}`).join(", ")}>
@@ -2019,11 +2042,12 @@ function VideoGrid({ videos, onDelete, onExtend, onRedo, onRefine, onReuseSeed, 
                     <div className="menu-popover" role="menu">
                       <a className="download-action" href={src} download={video.filename} role="menuitem" onClick={() => setOpenMenu(null)}>下載影片</a>
                       <button role="menuitem" onClick={() => { setOpenMenu(null); onRefine(video); }}>人臉精修</button>
+                      <button role="menuitem" onClick={() => { setOpenMenu(null); onVOSR(video); }}>VOSR 精修</button>
                       <button className="extend-action" role="menuitem" onClick={() => { setOpenMenu(null); onExtend(video); }} disabled={!video.extendable}>
                         {video.extendable ? "延伸影片" : video.inputMode === "reference" && (video.referenceFiles?.length ?? 0) > 8 ? "延伸影片（最多沿用 8 張參考圖）" : "延伸影片（作品無延伸資料）"}
                       </button>
-                      <button className="redo-action" role="menuitem" onClick={() => void loadForRedo(video)} disabled={loadingRedo === key || !video.prompt || !video.profile || !video.resolution || video.sound === undefined}>
-                        {loadingRedo === key ? "正在載入設定…" : video.prompt && video.profile && video.resolution && video.sound !== undefined ? "再做一次" : "再做一次（作品無原始設定）"}
+                      <button className="redo-action" role="menuitem" onClick={() => void loadForRedo(video)} disabled={loadingRedo === key || (!video.vosrRefined && (!video.prompt || !video.profile || !video.resolution || video.sound === undefined))}>
+                        {loadingRedo === key ? "正在載入設定…" : (video.vosrRefined || (video.prompt && video.profile && video.resolution && video.sound !== undefined)) ? "再做一次" : "再做一次（作品無原始設定）"}
                       </button>
                       <button className="delete-action" role="menuitem" onClick={() => void confirmDelete(video)} disabled={deleting === key}>刪除影片</button>
                     </div>

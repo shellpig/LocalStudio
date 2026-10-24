@@ -4,6 +4,9 @@ type GraphNode = { class_type: string; inputs: Record<string, unknown>; _meta?: 
 type PromptGraph = Record<string, GraphNode>;
 
 export type H3AttentionMethod = "sage" | "sol";
+export type H3Model = "original" | "singularity-v2";
+export const SINGULARITY_MODEL = "Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors";
+export const SINGULARITY_TURBO_LORA = "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors";
 
 export type GenerationOptions = {
   faceRefine?: import("./face-refine").FaceRefineOptions;
@@ -17,6 +20,7 @@ export type GenerationOptions = {
   /** Seconds paused after every sampling step to keep the laptop from overheating (min 15). */
   cooldownSeconds?: number;
   attentionMethod?: H3AttentionMethod;
+  h3Model?: H3Model;
   duration: number;
   aspect: "16:9" | "4:3" | "1:1" | "3:4" | "9:16";
   /** Reuse an exact seed. Omitted means a fresh random one. */
@@ -35,6 +39,10 @@ export type GenerationOptions = {
 };
 
 export type GeneratedVideo = {
+  vosrRefined?: boolean;
+  vosrSourceId?: string;
+  vosrSourceName?: string;
+  vosrSeed?: number;
   faceRefine?: import("./face-refine").FaceRefineOptions;
   faceRefined?: boolean;
   faceRefineSource?: Pick<GeneratedVideo, "filename" | "subfolder" | "type">;
@@ -79,6 +87,7 @@ export type GeneratedVideo = {
   cooldownSeconds?: number;
   generationSeconds?: number;
   attentionMethod?: H3AttentionMethod;
+  h3Model?: H3Model;
   seed?: number;
   extraLoras?: ExtraLora[];
   promptId?: string;
@@ -313,6 +322,27 @@ function frameCount(seconds: number, continuation: boolean) {
   return frames;
 }
 
+function configureH3Model(graph: PromptGraph, options: GenerationOptions) {
+  if (options.h3Model !== undefined && options.h3Model !== "original" && options.h3Model !== "singularity-v2") throw new Error("未知的 H3 模型。");
+  if (options.h3Model !== "singularity-v2") return graph;
+  if (options.profile === "safe-long" || options.profile === "low-vram") throw new Error("Singularity V2 請使用 4／6／8 步或 QUALITY。");
+  if (options.extraLoras?.some(({ name }) => name === TURBO_LORA || name === SINGULARITY_TURBO_LORA)) throw new Error("加速 LoRA 由模型自動配對，請勿額外疊加。");
+  graph["6"].inputs.unet_name = SINGULARITY_MODEL;
+  graph["6"]._meta = { title: "Singularity V2 pruned INT8" };
+  // Keep the model and scheduler on the same explicit video/audio shifts.
+  for (const item of Object.values(graph)) {
+    const model = item.inputs.model;
+    if (Array.isArray(model) && model[0] === "6") item.inputs.model = ["125", 0];
+  }
+  graph["125"] = node("MiniMaxH3SigmaShift", { model: ["6", 0], shift_video: 12, shift_audio: 3 }, "H3 時間偏移 12／3");
+  if (graph["120"]) {
+    graph["120"] = node("LoraLoaderModelOnly", { model: ["125", 0], lora_name: SINGULARITY_TURBO_LORA, strength_model: 1 }, "LightX2V Ref2VA Turbo 4-step");
+    graph["121"] = node("KSamplerSelect", { sampler_name: "euler" }, "Euler");
+    graph["122"].class_type = "H3CooledSampler";
+  }
+  return graph;
+}
+
 export function buildWorkflow(options: GenerationOptions, uploadedFirstImage?: string, uploadedLastImage?: string): PromptGraph {
   const [width, height] = resolveGenerationDimensions(options);
   const quality = options.profile === "quality";
@@ -403,7 +433,7 @@ export function buildWorkflow(options: GenerationOptions, uploadedFirstImage?: s
     }, "sol-attn 稀疏注意力");
     graph["16"].inputs.model = ["118", 0];
   }
-  return graph;
+  return configureH3Model(graph, options);
 }
 
 export function buildReferencePrompt(prompt: string, references: ReferenceDefinition[]) {
@@ -505,7 +535,7 @@ export function buildReferenceWorkflow(options: GenerationOptions, uploadedRefer
     }
     graph["16"].inputs.conditioning = conditioning;
   }
-  return graph;
+  return configureH3Model(graph, options);
 }
 
 /**
@@ -721,6 +751,7 @@ function referenceMetadataFromHistory(entry: { prompt?: unknown }) {
   const firstGuide = guides.find((item) => item.inputs.frame_idx === 0);
   const lastGuide = guides.find((item) => item.inputs.frame_idx === -1);
   return {
+    h3Model: Object.values(graph).some((item) => item.class_type === "UNETLoader" && item.inputs.unet_name === SINGULARITY_MODEL) ? "singularity-v2" as const : "original" as const,
     sourceMode: "reference" as const,
     inputMode: "reference" as const,
     prompt,
@@ -738,7 +769,7 @@ function referenceMetadataFromHistory(entry: { prompt?: unknown }) {
 
 function extraLorasFromGraph(graph: PromptGraph): ExtraLora[] | undefined {
   const found = Object.values(graph)
-    .filter((item) => ["MiniMaxH3TurboLoRA", "H3StudioLoRA"].includes(item.class_type) && item.inputs.lora_name !== TURBO_LORA)
+    .filter((item) => ["MiniMaxH3TurboLoRA", "H3StudioLoRA"].includes(item.class_type) && item.inputs.lora_name !== TURBO_LORA && item.inputs.lora_name !== SINGULARITY_TURBO_LORA)
     .map((item) => ({ name: String(item.inputs.lora_name), strength: Number(item.inputs.strength) }));
   return found.length ? found : undefined;
 }
@@ -775,6 +806,7 @@ function standardMetadataFromHistory(entry: { prompt?: unknown }) {
   const firstImagePath = linkedInputImage(graph, setup, "first_frame");
   const lastImagePath = linkedInputImage(graph, setup, "last_frame");
   return {
+    h3Model: Object.values(graph).some((item) => item.class_type === "UNETLoader" && item.inputs.unet_name === SINGULARITY_MODEL) ? "singularity-v2" as const : "original" as const,
     sourceMode: firstImagePath || lastImagePath ? "image" as const : "text" as const,
     inputMode: "standard" as const,
     prompt: typeof setup.inputs.prompt === "string" ? setup.inputs.prompt : undefined,
@@ -836,7 +868,7 @@ export async function getAvailableLoras(): Promise<string[]> {
   const response = await request("/object_info/H3StudioLoRA");
   const info = (await response.json()) as Record<string, { input?: { required?: { lora_name?: unknown[] } } }>;
   const names = info.H3StudioLoRA?.input?.required?.lora_name?.[0];
-  return Array.isArray(names) ? names.filter((name): name is string => typeof name === "string" && name !== TURBO_LORA) : [];
+  return Array.isArray(names) ? names.filter((name): name is string => typeof name === "string" && name !== TURBO_LORA && name !== SINGULARITY_TURBO_LORA) : [];
 }
 
 export async function getRecentVideos() {
@@ -903,6 +935,7 @@ export async function createVideo(
     chainId,
     clipIndex,
     latentPath,
+    h3Model: source ? source.h3Model ?? "original" : options.h3Model ?? "original",
     attentionMethod: options.attentionMethod ?? source?.attentionMethod ?? "sage",
     profile: source ? (referenceContinuation ? (source.profile === "low-vram" ? "low-vram" : source.profile === "fast" || source.profile === "cooled-fast" ? "fast" : source.profile === "cooled-turbo-4" ? "cooled-turbo-4" : "cooled-turbo-8") : "quality") : options.profile,
     resolution: source?.resolution ?? options.resolution,
@@ -961,6 +994,7 @@ export async function createVideo(
     seed: runOptions.seed,
     faceRefine: runOptions.faceRefine,
     extraLoras: runOptions.extraLoras,
+    h3Model: runOptions.h3Model,
     attentionMethod: runOptions.attentionMethod,
     cooldownSeconds: Math.max(MIN_COOLDOWN_SECONDS, runOptions.cooldownSeconds ?? DEFAULT_COOLDOWN_SECONDS),
     generationSeconds: segment.generationSeconds ?? Math.max(1, Math.round((Date.now() - startedAt) / 1000)),

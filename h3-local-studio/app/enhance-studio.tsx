@@ -4,9 +4,10 @@
 
 import { useEffect, useState } from "react";
 import { GeneratedVideo, outputUrl } from "@/lib/comfy";
+import VOSRStudio from "./vosr-studio";
 import { blendEnhancement, EnhancementInput, prepareEnhancement, runEnhancement } from "@/lib/enhance";
 
-export default function EnhanceStudio({ videos, connected, disabled, executionDisabled, onBusyChange, onComplete }: {
+function SeedVRStudio({ videos, connected, disabled, executionDisabled, onBusyChange, onComplete }: {
   videos: GeneratedVideo[];
   connected: boolean;
   disabled: boolean;
@@ -85,4 +86,20 @@ export default function EnhanceStudio({ videos, connected, disabled, executionDi
       {result && <div><h3>畫質提升 · 720p · {result.enhancementStrength}%</h3><video controls src={outputUrl(result)} aria-label="畫質提升成品" /><a href={outputUrl(result)} download={result.filename}>下載成品</a></div>}
     </div>
   </section>;
+}
+
+
+export default function EnhanceStudio(props: Parameters<typeof SeedVRStudio>[0] & {
+  enqueue: (label: string, run: (onStatus: (message: string) => void) => Promise<void>) => number;
+  initialWork?: GeneratedVideo | null;
+  redo?: boolean;
+}) {
+  const [method, setMethod] = useState(props.initialWork ? "vosr" : "seedvr2");
+  const [seedBusy, setSeedBusy] = useState(false);
+  return <>
+    <section className="composer enhancement-panel"><div className="enhancement-fields">
+      <label><span>畫質處理方式</span><select value={method} disabled={props.disabled || seedBusy} onChange={(event) => setMethod(event.target.value)}><option value="seedvr2">SeedVR2 · 提升至 720p</option><option value="vosr">VOSR · 1× 精修（維持原尺寸）</option></select></label>
+    </div></section>
+    {method === "vosr" ? <VOSRStudio videos={props.videos} connected={props.connected} disabled={props.disabled} enqueue={props.enqueue} initialWork={props.initialWork} redo={props.redo} onComplete={props.onComplete} /> : <SeedVRStudio {...props} onBusyChange={(busy) => { setSeedBusy(busy); props.onBusyChange(busy); }} />}
+  </>;
 }
