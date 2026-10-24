@@ -91,3 +91,20 @@ test("worker failures and interruptions are surfaced instead of returning a part
     }
   } finally { globalThis.fetch = previous; }
 });
+
+test("a temporarily unreadable progress snapshot does not reset the displayed frame count", async () => {
+  const previous = globalThis.fetch, oldWindow = globalThis.window;
+  globalThis.window = { setTimeout: (callback) => setTimeout(callback, 0) };
+  let histories = 0, snapshots = 0;
+  const messages = [];
+  globalThis.fetch = async (url) => {
+    const path = new URL(url).pathname;
+    if (path === "/prompt") return Response.json({ prompt_id: "recover" });
+    if (path === "/history/recover") return Response.json(++histories === 4 ? { recover: { outputs: { "1": { images: [{ filename: "saved.mp4" }] } } } } : {});
+    return Response.json(++snapshots === 2 ? { phase: "waiting" } : { phase: "processing", done: snapshots === 1 ? 48 : 50, total: 243 });
+  };
+  try {
+    await runVOSR(input, (message) => messages.push(message));
+    assert.deepEqual(messages, ["VOSR 精修：48／243 幀", "VOSR 精修：50／243 幀"]);
+  } finally { globalThis.fetch = previous; globalThis.window = oldWindow; }
+});

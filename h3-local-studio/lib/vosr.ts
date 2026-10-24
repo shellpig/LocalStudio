@@ -26,6 +26,7 @@ export async function runVOSR(input: VOSRInput, onStatus: (message: string) => v
     body: JSON.stringify({ prompt: { "1": { class_type: "H3StudioVOSR", inputs: { source_id: input.sourceId, job_id: jobId } } } }),
   })).json();
   if (!submitted.prompt_id) throw new Error(`無法開始 VOSR 精修：${submitted.error?.message ?? JSON.stringify(submitted.node_errors)}`);
+  let lastStatus = "";
   for (;;) {
     const history = await (await request(`/history/${encodeURIComponent(submitted.prompt_id)}`)).json();
     const entry = history[submitted.prompt_id];
@@ -35,7 +36,9 @@ export async function runVOSR(input: VOSRInput, onStatus: (message: string) => v
     if (video) return { ...video, promptId: submitted.prompt_id };
     if (entry?.status?.completed) throw new Error("VOSR 工作已結束，但找不到成品。");
     const progress = await (await request(`/h3-studio/vosr/progress/${jobId}`)).json();
-    onStatus(progress.phase === "processing" ? `VOSR 精修：${progress.done}／${progress.total} 幀` : progress.phase === "verifying" || progress.phase === "complete" ? "正在驗證幀數、尺寸與原音軌…" : progress.phase === "loading" ? "正在釋放前一筆模型並載入 VOSR…" : "VOSR 已排入 ComfyUI 佇列…");
+    const message = progress.phase === "processing" ? `VOSR 精修：${progress.done}／${progress.total} 幀` : progress.phase === "verifying" || progress.phase === "complete" ? "正在驗證幀數、尺寸與原音軌…" : progress.phase === "loading" ? "正在釋放前一筆模型並載入 VOSR…" : lastStatus || "VOSR 已排入 ComfyUI 佇列…";
+    if (message !== lastStatus) onStatus(message);
+    lastStatus = message;
     await new Promise((resolve) => window.setTimeout(resolve, 1000));
   }
 }

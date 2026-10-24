@@ -8,6 +8,8 @@ import subprocess
 import sys
 import tempfile
 
+from h3_studio_vosr_progress import write_progress
+
 
 def inspect_video(source):
     data = json.loads(subprocess.check_output([
@@ -41,9 +43,7 @@ def audio_hash(path):
 
 def run(source, output, progress, comfy_root):
     def report(phase, done=0, total=0):
-        temporary = progress.with_suffix(".tmp")
-        temporary.write_text(json.dumps({"phase": phase, "done": done, "total": total}), encoding="utf-8")
-        temporary.replace(progress)
+        return write_progress(progress, {"phase": phase, "done": done, "total": total})
 
     report("loading")
     stream, fps, count = inspect_video(source)

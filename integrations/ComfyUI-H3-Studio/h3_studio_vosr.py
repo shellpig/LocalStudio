@@ -13,6 +13,7 @@ from server import PromptServer
 
 from .h3_studio_api import metadata_path_for
 from .h3_studio_rtx import source_folder
+from .h3_studio_vosr_progress import read_progress, write_progress
 
 
 def installation_status():
@@ -60,7 +61,7 @@ async def restore(request):
 async def progress(request):
     try:
         path = job_folder(request.match_info["job_id"]) / "progress.json"
-        return web.json_response(json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {"phase": "waiting"})
+        return web.json_response(read_progress(path))
     except (ValueError, OSError) as error:
         return web.json_response({"error": str(error)}, status=400)
 
@@ -99,7 +100,7 @@ class H3StudioVOSR:
         folder = job_folder(job_id)
         folder.mkdir(parents=True, exist_ok=True)
         progress_path = folder / "progress.json"
-        progress_path.write_text(json.dumps({"phase": "loading"}), encoding="utf-8")
+        write_progress(progress_path, {"phase": "loading"})
         temporary = folder / "result.mp4"
         output = Path(folder_paths.get_output_directory()) / "video" / f"H3_Studio_VOSR_1x_{uuid.uuid4().hex[:12]}.mp4"
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -113,9 +114,10 @@ class H3StudioVOSR:
             with (folder / "worker.log").open("wb") as log:
                 process = subprocess.Popen([str(root.parent / ".venv/Scripts/python.exe"), "-u", str(Path(__file__).with_name("h3_studio_vosr_worker.py")), "--source", str(source), "--output", str(temporary), "--progress", str(progress_path), "--comfy-root", str(root)], stdout=log, stderr=subprocess.STDOUT, env={**os.environ, "PYTHONIOENCODING": "utf-8"}, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
                 bar = comfy.utils.ProgressBar(1)
+                state = {"phase": "loading"}
                 while process.poll() is None:
                     mm.throw_exception_if_processing_interrupted()
-                    state = json.loads(progress_path.read_text(encoding="utf-8"))
+                    state = read_progress(progress_path, state)
                     if state.get("total"):
                         bar.update_absolute(state["done"], state["total"])
                     time.sleep(0.25)
@@ -130,7 +132,7 @@ class H3StudioVOSR:
         except BaseException:
             if process is not None:
                 stop_worker(process)
-            progress_path.write_text(json.dumps({"phase": "failed"}), encoding="utf-8")
+            write_progress(progress_path, {"phase": "failed"})
             output.unlink(missing_ok=True)
             metadata_path_for(output).unlink(missing_ok=True)
             raise

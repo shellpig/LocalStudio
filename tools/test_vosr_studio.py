@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 DIRECTORY = ROOT / "integrations/ComfyUI-H3-Studio"
+sys.path.insert(0, str(DIRECTORY))
 
 
 def load(name, path):
