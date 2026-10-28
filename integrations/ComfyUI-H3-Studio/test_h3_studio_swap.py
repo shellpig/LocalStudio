@@ -130,6 +130,33 @@ class SwapTests(unittest.TestCase):
         self.assertAlmostEqual(complete["duration"], info["duration"], places=3)
         self.assertAlmostEqual(self.swap.probe_video(self.root / "output/video" / complete["filename"])["duration"], info["duration"], delta=0.05)
 
+    def test_untmods_settings_and_metadata_survive_prepare_and_finish(self):
+        settings = {**self.settings, "mode": "untmods-face", "steps": 8, "prompt": "Faceswap"}
+        for steps in (8, 20):
+            self.assertEqual(self.swap.validate_settings({**settings, "steps": steps})["mode"], "untmods-face")
+        for steps in (4, 6):
+            with self.assertRaisesRegex(ValueError, "8.*20"):
+                self.swap.validate_settings({**settings, "steps": steps})
+        folder = self.swap.source_folder("c" * 32)
+        folder.mkdir(parents=True)
+        source = folder / "video.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=128x128:rate=24",
+                        "-t", "1", "-c:v", "libx264", str(source)], check=True)
+        reference = folder / "reference.png"
+        from PIL import Image
+        Image.new("RGB", (128, 128)).save(reference)
+        self.swap.prepare_segments(folder, source, reference, settings, "untmods_source.mp4")
+        raw = self.root / "output/h3_swap_cache" / f"{'c' * 32}_seg0_00001_.mp4"
+        raw.parent.mkdir(parents=True)
+        shutil.copyfile(folder / "guide_0.mp4", raw)
+        result = self.swap.finish_segments("c" * 32, [{"filename": raw.name, "subfolder": "h3_swap_cache"}], 12)
+        self.assertEqual(result["swapMode"], "untmods-face")
+        self.assertEqual(result["steps"], 8)
+        self.assertEqual(result["prompt"], "Faceswap")
+        metadata = json.loads((self.root / "output/video" / result["filename"]).with_suffix(".mp4.h3.json").read_text(encoding="utf-8"))
+        self.assertEqual(metadata["swapMode"], "untmods-face")
+        self.assertEqual(metadata["swapReferenceFile"], f"h3_swap/{'c' * 32}/reference.png")
+
     def test_guide_length_snaps_to_h3_grid(self):
         self.assertEqual([self.swap.guide_length(n) for n in (1, 5, 6, 124, 360)], [5, 5, 22, 124, 362])
 

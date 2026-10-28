@@ -6,7 +6,7 @@ import { TURBO_LORA } from "../lib/comfy.ts";
 
 const source = await readFile(new URL("../lib/swap.ts", import.meta.url), "utf8");
 const javascript = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText.replace('"./comfy"', JSON.stringify(new URL("../lib/comfy.ts", import.meta.url).href));
-const { buildSwapWorkflow, buildSwapPrompt, swapDimensions, runSwap, SWAP_LORAS } = await import(`data:text/javascript;base64,${Buffer.from(javascript).toString("base64")}`);
+const { buildSwapWorkflow, buildSwapPrompt, swapDimensions, runSwap, SWAP_LORAS, UNTMODS_TURBO_LORA } = await import(`data:text/javascript;base64,${Buffer.from(javascript).toString("base64")}`);
 const input = { sourceId: "a".repeat(32), sourceName: "source.mp4", sourceFile: "source.mp4", referenceFile: "head.png", width: 720, height: 1280, duration: 6, segments: [{ inputFile: "guide_0.mp4", keepFrames: 124 }, { inputFile: "guide_1.mp4", keepFrames: 20, length: 22 }] };
 const options = { mode: "head", steps: 20, resolution: "p480", prompt: buildSwapPrompt("head"), strength: 1, seed: 42, cooldownSeconds: 5 };
 
@@ -96,6 +96,64 @@ test("Akatz jobs check their own LoRA, preserve settings and finish without requ
     const completed = await runSwap(new File(["video"], "source.mp4"), new File(["image"], "reference.png"), input, saved, { stop: false }, () => {});
     assert.equal(completed.result.swapMode, "akatz-v1.5");
     assert.equal(completed.result.steps, 20);
+  } finally { globalThis.fetch = previous; }
+});
+
+test("UntMods uses the Faceswap trigger, native reference video and its dedicated 8-step Turbo", () => {
+  const prompt = buildSwapPrompt("untmods-face", "the woman on the left");
+  assert.match(prompt, /^Faceswap\./);
+  assert.match(prompt, /the woman on the left.*<Video 1>/);
+  assert.match(prompt, /Preserve the original hairstyle, body, clothing/);
+  for (const steps of [8, 20]) {
+    const graph = buildSwapWorkflow(input, 0, { ...options, mode: "untmods-face", steps, prompt });
+    assert.equal(graph["2"].inputs.lora_name, "SS_FaceSwap_MiniMax_H3_REF2VA.safetensors");
+    assert.deepEqual(graph["13"].inputs["ref_videos.ref_video_0"], ["12", 0]);
+    assert.deepEqual(graph["15"].inputs.conditioning, ["13", 0]);
+    assert.equal(graph["14"], undefined);
+    assert.equal(graph["16"].inputs.sampler_name, "res_multistep");
+    assert.equal(graph["17"].class_type, "H3CooledSampler");
+    assert.equal(graph["18"].inputs.steps, steps);
+    if (steps === 8) {
+      assert.equal(graph["25"].class_type, "LoraLoaderModelOnly");
+      assert.equal(graph["25"].inputs.lora_name, UNTMODS_TURBO_LORA);
+      assert.deepEqual(graph["2"].inputs.model, ["25", 0]);
+    } else {
+      assert.equal(graph["25"], undefined);
+      assert.deepEqual(graph["2"].inputs.model, ["1", 0]);
+    }
+  }
+  for (const steps of [4, 6]) assert.throws(() => buildSwapWorkflow(input, 0, { ...options, mode: "untmods-face", steps }), /設定無效/);
+});
+
+test("UntMods checks its own Turbo before upload and preserves mode through finish", async () => {
+  const previous = globalThis.fetch;
+  const saved = { ...options, mode: "untmods-face", steps: 8, prompt: buildSwapPrompt("untmods-face") };
+  let installed = [SWAP_LORAS["untmods-face"], TURBO_LORA], uploads = 0;
+  globalThis.fetch = async (url, init) => {
+    const path = new URL(url).pathname;
+    if (path.startsWith("/object_info")) return Response.json({ LoraLoaderModelOnly: { input: { required: { lora_name: [installed] } } } });
+    if (path.endsWith("/prepare")) {
+      uploads++;
+      assert.equal(JSON.parse(init.body.get("settings")).mode, saved.mode);
+      return Response.json({ ...input, segments: input.segments.slice(0, 1) });
+    }
+    if (path === "/prompt") {
+      assert.equal(JSON.parse(init.body).prompt["25"].inputs.lora_name, UNTMODS_TURBO_LORA);
+      return Response.json({ prompt_id: "untmods" });
+    }
+    if (path === "/history/untmods") return Response.json({ untmods: { status: { completed: true }, outputs: { "24": { images: [{ filename: `${input.sourceId}_seg0_00001_.mp4`, subfolder: "h3_swap_cache", type: "output" }] } } } });
+    if (path.endsWith("/finish")) return Response.json({ filename: "untmods.mp4", swapMode: saved.mode, steps: saved.steps, prompt: saved.prompt });
+    throw new Error(path);
+  };
+  try {
+    const video = new File(["video"], "source.mp4"), image = new File(["image"], "face.png");
+    await assert.rejects(runSwap(video, image, input, saved, { stop: false }, () => {}), /minimax_h3_ref2v_turbo_8step_v1\.0/);
+    assert.equal(uploads, 0);
+    installed = [SWAP_LORAS["untmods-face"], UNTMODS_TURBO_LORA];
+    const completed = await runSwap(video, image, input, saved, { stop: false }, () => {});
+    assert.equal(completed.result.swapMode, saved.mode);
+    assert.equal(completed.result.steps, 8);
+    assert.equal(uploads, 1);
   } finally { globalThis.fetch = previous; }
 });
 

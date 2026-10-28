@@ -25,12 +25,14 @@ def source_folder(source_id):
 
 
 def validate_settings(data):
-    if not isinstance(data, dict) or data.get("mode") not in {"head", "character", "akatz-v1.5"}:
+    if not isinstance(data, dict) or data.get("mode") not in {"head", "character", "akatz-v1.5", "untmods-face"}:
         raise ValueError("請選擇有效的換角模式。")
     if type(data.get("steps")) is not int or data["steps"] not in {4, 6, 8, 20}:
         raise ValueError("步數必須為 4、6、8 或 20。")
     if data["mode"] == "akatz-v1.5" and data["steps"] != 20:
         raise ValueError("Akatz V1.5 目前僅支援 20 步原生採樣。")
+    if data["mode"] == "untmods-face" and data["steps"] not in {8, 20}:
+        raise ValueError("UntMods FaceSwap 支援 8 步專用 Turbo 或 20 步原生採樣。")
     if data.get("resolution") not in {"p480", "p540", "native"}:
         raise ValueError("無效的解析度。")
     for key in ("width", "height"):
