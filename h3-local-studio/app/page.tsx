@@ -1845,10 +1845,10 @@ export default function Home() {
               : "只留下要參考的部分。參考圖會被縮到設定的像素量，裁得越準細節越多；預設依 <image1> 裁完的比例輸出。"
             : cropTarget.kind === "reference"
               ? "只留下要參考的部分，例如臉部。參考圖會被縮到與輸出畫面相同的像素量，所以裁得越準，臉的細節就越多。裁切比例不影響輸出畫面。"
-              : `裁切框鎖定 ${aspect}，因為首尾圖的比例決定輸出影片的畫面比例。`}
+              : "可自由裁切，不鎖定比例。輸出影片會依首圖裁切後的比例（沒有首圖時依尾圖）；尾圖比例不同時會依首圖比例置中裁切。"}
           aspect={cropTarget.kind === "qwen"
             ? cropReferenceIndex === 1 && qwenEditAspect !== "auto" ? CROP_ASPECT[qwenEditAspect] : undefined
-            : cropTarget.kind === "reference" ? undefined : CROP_ASPECT[aspect]}
+            : undefined}
           onCancel={() => setCropTarget(null)}
           onApply={(rect) => void applyCrop(rect)}
         />

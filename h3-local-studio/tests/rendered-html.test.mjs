@@ -488,10 +488,12 @@ test("crops reference and keyframe images without altering the chosen file", asy
   assert.match(page, /function croppableFile\(target: CropTarget\)/);
   assert.match(page, /async function restoreOriginalImage/);
 
-  // Keyframes drive the output ratio, so their crop box is locked to it.
-  // Reference images, H3 and Qwen alike, do not, so they crop freely.
-  assert.match(page, /aspect=\{cropTarget\.kind === "reference" \|\| cropTarget\.kind === "qwen" \? undefined : CROP_ASPECT\[aspect\]\}/);
-  assert.match(page, /const CROP_ASPECT: Record<GenerationOptions\["aspect"\], number>/);
+  // Keyframes crop freely: the output follows the cropped first image's own
+  // ratio, so locking the box to the (hidden) aspect setting only got in the way.
+  // Only the first Qwen image is locked, and only when a ratio is chosen.
+  assert.doesNotMatch(page, /CROP_ASPECT\[aspect\]/);
+  assert.match(page, /cropReferenceIndex === 1 && qwenEditAspect !== "auto" \? CROP_ASPECT\[qwenEditAspect\] : undefined\s*\n\s*: undefined\}/);
+  assert.match(page, /const CROP_ASPECT: Record<QwenAspect, number>/);
 
   // The thumbnail is a <label>, so the crop button must not reopen the picker.
   assert.match(page, /event\.preventDefault\(\);\s*\n\s*event\.stopPropagation\(\);/);
