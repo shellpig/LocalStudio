@@ -189,3 +189,30 @@ test("successful refinement exports only after the GPU result and cancellation n
     assert.equal(calls.length, before);
   } finally { globalThis.fetch = previous; }
 });
+
+test("the stop button still interrupts the running prompt when polling notices the stop before the queue lookup returns", async () => {
+  // cancelFace awaits GET /queue. Over a slow link (a Colab tunnel) the poll loop
+  // sees the stop flag first and clears control.promptId, so the id must be
+  // captured up front or the GPU keeps refining behind the next queued job.
+  const previous = globalThis.fetch, previousWindow = globalThis.window;
+  const control = { stop: false }; const calls = []; let releaseQueue, cancelling;
+  globalThis.window = { setTimeout: (done) => setImmediate(done) };
+  globalThis.fetch = async (url, init) => {
+    const path = new URL(url).pathname;
+    if (path === "/prompt") return Response.json({ prompt_id: "running-face" });
+    if (path === "/history/running-face") return Response.json({});
+    if (path === "/queue" && !init) {
+      if (control.stop) await new Promise((resolve) => { releaseQueue = resolve; });
+      return Response.json({ queue_running: [[1, "running-face"]] });
+    }
+    calls.push([path, init?.body && JSON.parse(init.body)]);
+    return Response.json({});
+  };
+  try {
+    await assert.rejects(runFace(video, DEFAULT_FACE_REFINE, control, (message) => { if (message.includes("GPU 正在")) cancelling = cancelFace(control); }, prepared), /已停止/);
+    assert.equal(control.promptId, undefined);
+    releaseQueue();
+    await cancelling;
+    assert.deepEqual(calls, [["/interrupt", { prompt_id: "running-face" }]]);
+  } finally { globalThis.fetch = previous; globalThis.window = previousWindow; }
+});

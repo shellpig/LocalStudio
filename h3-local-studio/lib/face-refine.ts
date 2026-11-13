@@ -86,13 +86,16 @@ export function buildFaceWorkflow(source: FacePrepared, prompt: string, cooldown
 }
 
 export async function cancelFace(control: FaceControl) {
+  // Read the id before awaiting: the poll loop sees `stop` and clears
+  // control.promptId while the queue lookup is still in flight.
+  const promptId = control.promptId;
   control.stop = true;
-  if (!control.promptId) return;
+  if (!promptId) return;
   const queue = await (await request("/queue")).json() as { queue_running: [number, string][] };
-  if (queue.queue_running.some((item) => item[1] === control.promptId)) {
-    await request("/interrupt", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt_id: control.promptId }) });
+  if (queue.queue_running.some((item) => item[1] === promptId)) {
+    await request("/interrupt", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt_id: promptId }) });
   } else {
-    await request("/queue", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ delete: [control.promptId] }) });
+    await request("/queue", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ delete: [promptId] }) });
   }
 }
 
